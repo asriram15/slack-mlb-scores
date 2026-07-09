@@ -9,7 +9,7 @@ Uses the free [MLB Stats API](https://statsapi.mlb.com) (no API key) and [Slack 
 - **`/scores`** — full scoreboard for today (live, scheduled, final)
 - **`/scores <abbrev>`** — today’s games for one team (3-letter abbrev, e.g. `NYY`, `BOS`)
 - **`/scores help`** — list all team abbreviations (only you see this reply)
-- **Channel updates** — posts on **score changes** only (plus a one-line alert when a game goes final); includes batter, pitcher, and who scored from MLB live play-by-play. No inning-only posts.
+- **Channel updates** — posts on **score changes** only (plus a one-line alert when a game goes final); includes batter, pitcher, and who scored from MLB live play-by-play. Multiple runs in one poll interval each get their own post (with the score after that play). No inning-only posts.
 - **Game-day polling window** — polls during typical MLB hours (11:00–02:00 ET by default) to reduce idle API calls
 
 ## Prerequisites

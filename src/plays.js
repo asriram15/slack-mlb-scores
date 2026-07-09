@@ -65,26 +65,78 @@ export function findScoringPlayForScore(
   homeScore,
   sinceIndex,
 ) {
-  const recent = allPlays.filter((p) => {
-    const idx = p.about?.atBatIndex ?? -1;
-    return idx > sinceIndex && isScoringPlay(p);
+  const plays = findScoringPlaysInGap(
+    allPlays,
+    sinceIndex,
+    null,
+    null,
+    awayScore,
+    homeScore,
+  );
+  return plays.at(-1) ?? null;
+}
+
+/**
+ * All scoring plays between the last seen at-bat and the current scoreboard.
+ * Used so multiple runs in one poll interval each get their own alert.
+ *
+ * @param {object[]} allPlays
+ * @param {number} sinceIndex
+ * @param {number|null} prevAway
+ * @param {number|null} prevHome
+ * @param {number} currAway
+ * @param {number} currHome
+ * @returns {object[]}
+ */
+export function findScoringPlaysInGap(
+  allPlays,
+  sinceIndex,
+  prevAway,
+  prevHome,
+  currAway,
+  currHome,
+) {
+  const recent = allPlays
+    .filter((p) => {
+      const idx = p.about?.atBatIndex ?? -1;
+      return idx > sinceIndex && isScoringPlay(p);
+    })
+    .sort(
+      (a, b) => (a.about?.atBatIndex ?? 0) - (b.about?.atBatIndex ?? 0),
+    );
+
+  const inGap = recent.filter((p) => {
+    const a = p.result?.awayScore;
+    const h = p.result?.homeScore;
+    if (typeof a !== 'number' || typeof h !== 'number') return true;
+
+    if (typeof prevAway === 'number' && typeof prevHome === 'number') {
+      if (a < prevAway || h < prevHome) return false;
+      if (a === prevAway && h === prevHome) return false;
+    }
+
+    if (a > currAway || h > currHome) return false;
+    return true;
   });
+
+  if (inGap.length) return inGap;
 
   const exact = recent.filter(
     (p) =>
-      p.result?.awayScore === awayScore && p.result?.homeScore === homeScore,
+      p.result?.awayScore === currAway && p.result?.homeScore === currHome,
   );
-  if (exact.length) return exact.at(-1);
+  if (exact.length) return [exact.at(-1)];
 
-  if (recent.length) return recent.at(-1);
+  if (recent.length) return [recent.at(-1)];
 
   const fallback = allPlays.filter(
     (p) =>
       isScoringPlay(p) &&
-      p.result?.awayScore === awayScore &&
-      p.result?.homeScore === homeScore,
+      p.result?.awayScore === currAway &&
+      p.result?.homeScore === currHome,
   );
-  return fallback.at(-1) ?? null;
+  const last = fallback.at(-1);
+  return last ? [last] : [];
 }
 
 /**
@@ -231,58 +283,179 @@ export function formatEndingPlayContext(play) {
 }
 
 /**
- * Build alert text for a score change or game-ending play.
- * @param {object[]} allPlays
- * @param {{ scoreChanged: boolean, isFinalTransition: boolean, sinceIndex: number, game: import('./format.js').GameSummary }}
- * @returns {PlayAlertContext|null}
+ * @typedef {object} PlayAlertWithScore
+ * @property {string} text
+ * @property {'scoring'|'ending'|'walkoff'} kind
+ * @property {number} atBatIndex
+ * @property {number} awayScore
+ * @property {number} homeScore
+ * @property {number|null} [inning]
+ * @property {string|null} [inningHalf]
  */
-export function buildPlayAlertContext(
+
+/**
+ * Build one alert per scoring play in the poll gap (plus ending context on final).
+ * @param {object[]} allPlays
+ * @param {{
+ *   scoreChanged: boolean,
+ *   isFinalTransition: boolean,
+ *   sinceIndex: number,
+ *   game: import('./format.js').GameSummary,
+ *   prevAwayScore?: number,
+ *   prevHomeScore?: number,
+ * }} opts
+ * @returns {PlayAlertWithScore[]}
+ */
+export function buildPlayAlertContexts(
   allPlays,
-  { scoreChanged, isFinalTransition, sinceIndex, game },
+  {
+    scoreChanged,
+    isFinalTransition,
+    sinceIndex,
+    game,
+    prevAwayScore,
+    prevHomeScore,
+  },
 ) {
-  const lastPlay = lastPlayInGame(allPlays);
+  /** @type {PlayAlertWithScore[]} */
+  const alerts = [];
+
+  if (scoreChanged) {
+    const plays = findScoringPlaysInGap(
+      allPlays,
+      sinceIndex,
+      prevAwayScore ?? null,
+      prevHomeScore ?? null,
+      game.awayScore,
+      game.homeScore,
+    );
+
+    for (const play of plays) {
+      const latest = scoringPlayToAlert(play);
+      if (!latest) continue;
+
+      const awayScore =
+        typeof play.result?.awayScore === 'number'
+          ? play.result.awayScore
+          : game.awayScore;
+      const homeScore =
+        typeof play.result?.homeScore === 'number'
+          ? play.result.homeScore
+          : game.homeScore;
+
+      let kind = 'scoring';
+      if (
+        isFinalTransition &&
+        play === plays.at(-1) &&
+        isWalkOffPlay(play, { ...game, awayScore, homeScore })
+      ) {
+        kind = 'walkoff';
+      }
+
+      alerts.push({
+        text: formatScoringContext(latest.context),
+        kind,
+        atBatIndex: latest.atBatIndex,
+        awayScore,
+        homeScore,
+        inning: play.about?.inning ?? null,
+        inningHalf: halfInningLabel(play),
+      });
+    }
+  }
 
   if (isFinalTransition) {
+    const lastAlert = alerts.at(-1);
+    if (lastAlert?.kind === 'walkoff') {
+      return alerts;
+    }
+
+    const lastPlay = lastPlayInGame(allPlays);
     if (lastPlay && isWalkOffPlay(lastPlay, game)) {
       const ctx = parseScoringPlay(lastPlay);
       if (ctx) {
-        return {
+        // Replace trailing scoring alert for the same at-bat, or append.
+        const walkoff = {
           text: formatScoringContext(ctx),
-          kind: 'walkoff',
+          kind: /** @type {const} */ ('walkoff'),
           atBatIndex: lastPlay.about?.atBatIndex ?? -1,
+          awayScore: game.awayScore,
+          homeScore: game.homeScore,
+          inning: lastPlay.about?.inning ?? game.inning,
+          inningHalf: halfInningLabel(lastPlay) ?? game.inningHalf,
         };
+        if (lastAlert && lastAlert.atBatIndex === walkoff.atBatIndex) {
+          alerts[alerts.length - 1] = walkoff;
+        } else if (!scoreChanged || !lastAlert) {
+          alerts.push(walkoff);
+        } else {
+          alerts[alerts.length - 1] = {
+            ...lastAlert,
+            kind: 'walkoff',
+            text: walkoff.text,
+          };
+        }
+        return alerts;
       }
     }
 
     const ending = formatEndingPlayContext(lastPlay);
     if (ending) {
-      return {
-        text: ending,
-        kind: 'ending',
-        atBatIndex: lastPlay?.about?.atBatIndex ?? -1,
-      };
-    }
-
-    return null;
-  }
-
-  if (scoreChanged) {
-    const play = findScoringPlayForScore(
-      allPlays,
-      game.awayScore,
-      game.homeScore,
-      sinceIndex,
-    );
-    const latest = scoringPlayToAlert(play);
-    if (latest) {
-      return {
-        text: formatScoringContext(latest.context),
-        kind: 'scoring',
-        atBatIndex: latest.atBatIndex,
-      };
+      if (alerts.length === 0) {
+        alerts.push({
+          text: ending,
+          kind: 'ending',
+          atBatIndex: lastPlay?.about?.atBatIndex ?? -1,
+          awayScore: game.awayScore,
+          homeScore: game.homeScore,
+          inning: lastPlay?.about?.inning ?? game.inning,
+          inningHalf: halfInningLabel(lastPlay) ?? game.inningHalf,
+        });
+      } else {
+        // Keep scoring alerts; final banner is applied by the poller on the last post.
+      }
     }
   }
 
+  return alerts;
+}
+
+/**
+ * Build alert text for a score change or game-ending play.
+ * @param {object[]} allPlays
+ * @param {{
+ *   scoreChanged: boolean,
+ *   isFinalTransition: boolean,
+ *   sinceIndex: number,
+ *   game: import('./format.js').GameSummary,
+ *   prevAwayScore?: number,
+ *   prevHomeScore?: number,
+ * }} opts
+ * @returns {PlayAlertContext|null}
+ */
+export function buildPlayAlertContext(allPlays, opts) {
+  const alerts = buildPlayAlertContexts(allPlays, opts);
+  const last = alerts.at(-1);
+  if (!last) return null;
+  return {
+    text: last.text,
+    kind: last.kind,
+    atBatIndex: last.atBatIndex,
+  };
+}
+
+/**
+ * @param {object} [play]
+ * @returns {string|null}
+ */
+function halfInningLabel(play) {
+  if (!play?.about) return null;
+  if (play.about.halfInning === 'top' || play.about.isTopInning === true) {
+    return 'Top';
+  }
+  if (play.about.halfInning === 'bottom' || play.about.isTopInning === false) {
+    return 'Bottom';
+  }
   return null;
 }
 

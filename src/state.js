@@ -36,6 +36,8 @@ function parseFingerprint(fp) {
  * @property {import('./format.js').GameSummary} game
  * @property {boolean} scoreChanged
  * @property {boolean} statusChanged
+ * @property {number} prevAwayScore
+ * @property {number} prevHomeScore
  */
 
 /**
@@ -64,6 +66,8 @@ export function detectChange(game) {
     scoreChanged:
       prev.awayScore !== game.awayScore || prev.homeScore !== game.homeScore,
     statusChanged: prev.abstractState !== game.abstractState,
+    prevAwayScore: prev.awayScore,
+    prevHomeScore: prev.homeScore,
   };
 }
 

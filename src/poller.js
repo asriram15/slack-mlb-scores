@@ -10,7 +10,11 @@ import {
   getPendingPlayDetails,
   incrementPendingAttempts,
 } from './state.js';
-import { buildPlayAlertContext, maxAtBatIndex } from './plays.js';
+import {
+  buildPlayAlertContext,
+  buildPlayAlertContexts,
+  maxAtBatIndex,
+} from './plays.js';
 import { isWithinPollWindow, describePollWindow } from './poll-window.js';
 
 const TZ = () => process.env.GAME_DAY_TZ ?? 'America/New_York';
@@ -18,6 +22,45 @@ const INTERVAL = () =>
   Number(process.env.POLL_INTERVAL_MS ?? 120_000);
 
 /**
+ * @param {number} gamePk
+ * @param {import('./format.js').GameSummary} game
+ * @param {{
+ *   scoreChanged: boolean,
+ *   isFinalTransition: boolean,
+ *   prevAwayScore?: number,
+ *   prevHomeScore?: number,
+ * }} opts
+ * @returns {Promise<import('./plays.js').PlayAlertWithScore[]>}
+ */
+async function fetchPlayContextsForAlert(
+  gamePk,
+  game,
+  { scoreChanged, isFinalTransition, prevAwayScore, prevHomeScore },
+) {
+  const feed = await fetchLiveFeedWithRetry(gamePk);
+  const allPlays = feed.liveData?.plays?.allPlays ?? [];
+  const sinceIndex = getLastPlayIndex(gamePk);
+
+  const alerts = buildPlayAlertContexts(allPlays, {
+    scoreChanged,
+    isFinalTransition,
+    sinceIndex,
+    game,
+    prevAwayScore,
+    prevHomeScore,
+  });
+
+  if (alerts.length) {
+    const lastIdx = Math.max(...alerts.map((a) => a.atBatIndex));
+    setLastPlayIndex(gamePk, lastIdx);
+    advanceLastPlayIndex(gamePk, maxAtBatIndex(allPlays));
+  }
+
+  return alerts;
+}
+
+/**
+ * Legacy single-alert path used by pending play-detail follow-ups.
  * @param {number} gamePk
  * @param {import('./format.js').GameSummary} game
  * @param {{ scoreChanged: boolean, isFinalTransition: boolean }} opts
@@ -101,6 +144,75 @@ async function tryResolvePendingPlayDetails(app, channelId, game) {
 }
 
 /**
+ * @param {import('./format.js').GameSummary} game
+ * @param {import('./plays.js').PlayAlertWithScore} alert
+ * @param {{ isFinalTransition: boolean, isLast: boolean }} opts
+ */
+function gameSnapshotForAlert(game, alert, { isFinalTransition, isLast }) {
+  return {
+    ...game,
+    awayScore: alert.awayScore,
+    homeScore: alert.homeScore,
+    inning: alert.inning ?? game.inning,
+    inningHalf: alert.inningHalf ?? game.inningHalf,
+    abstractState:
+      isFinalTransition && isLast ? 'Final' : game.abstractState === 'Final' && !isLast
+        ? 'Live'
+        : game.abstractState,
+  };
+}
+
+/**
+ * @param {import('@slack/bolt').App} app
+ * @param {string} channelId
+ * @param {import('./format.js').GameSummary} game
+ * @param {import('./plays.js').PlayAlertWithScore[]} alerts
+ * @param {{ scoreChanged: boolean, statusChanged: boolean, isFinalTransition: boolean }} meta
+ */
+async function postScoreAlerts(app, channelId, game, alerts, meta) {
+  const { scoreChanged, statusChanged, isFinalTransition } = meta;
+
+  if (alerts.length === 0) {
+    const text = formatChangeAlert(game, {
+      scoreChanged,
+      statusChanged,
+      isFinalTransition,
+    });
+    await app.client.chat.postMessage({
+      channel: channelId,
+      text,
+      unfurl_links: false,
+    });
+    console.log('[poller] posted:', text.replace(/\n/g, ' | '));
+    return;
+  }
+
+  for (let i = 0; i < alerts.length; i++) {
+    const alert = alerts[i];
+    const isLast = i === alerts.length - 1;
+    const snapshot = gameSnapshotForAlert(game, alert, {
+      isFinalTransition,
+      isLast,
+    });
+
+    const text = formatChangeAlert(snapshot, {
+      playContext: alert.text,
+      playContextKind: alert.kind,
+      scoreChanged: true,
+      statusChanged: isLast ? statusChanged : false,
+      isFinalTransition: isLast && isFinalTransition,
+    });
+
+    await app.client.chat.postMessage({
+      channel: channelId,
+      text,
+      unfurl_links: false,
+    });
+    console.log('[poller] posted:', text.replace(/\n/g, ' | '));
+  }
+}
+
+/**
  * @param {import('@slack/bolt').App} app
  * @param {string} channelId
  */
@@ -139,17 +251,17 @@ export async function pollOnce(app, channelId) {
 
     const isFinalTransition = isFinal && change.statusChanged;
 
-    let playContext = null;
-    let playContextKind = undefined;
+    /** @type {import('./plays.js').PlayAlertWithScore[]} */
+    let alerts = [];
     if (change.scoreChanged || isFinalTransition) {
       try {
-        const alert = await fetchPlayContextForAlert(game.gamePk, game, {
+        alerts = await fetchPlayContextsForAlert(game.gamePk, game, {
           scoreChanged: change.scoreChanged,
           isFinalTransition,
+          prevAwayScore: change.prevAwayScore,
+          prevHomeScore: change.prevHomeScore,
         });
-        if (alert) {
-          playContext = alert.text;
-          playContextKind = alert.kind;
+        if (alerts.length) {
           clearPendingPlayDetails(game.gamePk);
         } else if (change.scoreChanged && !isFinalTransition) {
           markPendingPlayDetails(
@@ -176,21 +288,12 @@ export async function pollOnce(app, channelId) {
       }
     }
 
-    const text = formatChangeAlert(change.game, {
-      playContext: playContext ?? undefined,
-      playContextKind,
-      scoreChanged: change.scoreChanged,
-      statusChanged: change.statusChanged,
-      isFinalTransition,
-    });
-
     try {
-      await app.client.chat.postMessage({
-        channel: channelId,
-        text,
-        unfurl_links: false,
+      await postScoreAlerts(app, channelId, game, alerts, {
+        scoreChanged: change.scoreChanged,
+        statusChanged: change.statusChanged,
+        isFinalTransition,
       });
-      console.log('[poller] posted:', text.replace(/\n/g, ' | '));
     } catch (err) {
       console.error('[poller] Slack post failed:', err.message);
     }
