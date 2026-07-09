@@ -1,0 +1,15 @@
+# fly.toml — generated template; adjust app name on first deploy
+app = 'slack-mlb-scores'
+primary_region = 'iad'
+
+[build]
+
+[env]
+  GAME_DAY_TZ = 'America/New_York'
+  POLL_INTERVAL_MS = '120000'
+  POLL_START_HOUR = '11'
+  POLL_END_HOUR = '2'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'

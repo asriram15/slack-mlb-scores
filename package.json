@@ -1,0 +1,19 @@
+{
+  "name": "slack-mlb-scores",
+  "version": "1.0.0",
+  "description": "Slack bot for MLB live scores via /scores and change-triggered channel posts",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test:mlb": "node src/mlb.js",
+    "test:play": "node src/test-play.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@slack/bolt": "^4.4.0",
+    "dotenv": "^16.4.7"
+  }
+}
