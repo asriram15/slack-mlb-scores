@@ -7,8 +7,7 @@ primary_region = 'iad'
 [env]
   GAME_DAY_TZ = 'America/New_York'
   POLL_INTERVAL_MS = '120000'
-  POLL_START_HOUR = '11'
-  POLL_END_HOUR = '2'
+  POLL_IDLE_INTERVAL_MS = '600000'
 
 [[vm]]
   size = 'shared-cpu-1x'

@@ -10,7 +10,7 @@ Uses the free [MLB Stats API](https://statsapi.mlb.com) (no API key) and [Slack 
 - **`/scores <abbrev>`** — today’s games for one team (3-letter abbrev, e.g. `NYY`, `BOS`)
 - **`/scores help`** — list all team abbreviations (only you see this reply)
 - **Channel updates** — posts on **score changes** only (plus a one-line alert when a game goes final); includes batter, pitcher, and who scored from MLB live play-by-play. Multiple runs in one poll interval each get their own post (with the score after that play). No inning-only posts.
-- **Game-day polling window** — polls during typical MLB hours (11:00–02:00 ET by default) to reduce idle API calls
+- **Schedule-driven polling** — polls fast while any game is scheduled or live, and slower when the slate is finished, so idle hours and the offseason cost fewer API calls
 
 ## Prerequisites
 
@@ -64,13 +64,12 @@ Channel auto-updates still cover **all** MLB games; team filter applies only to 
 | `SLACK_BOT_TOKEN` | Yes | Bot token (`xoxb-...`) |
 | `SLACK_APP_TOKEN` | Yes | App-level token (`xapp-...`) with `connections:write` |
 | `SLACK_SCORES_CHANNEL_ID` | Yes | Channel ID for change-triggered posts |
-| `POLL_INTERVAL_MS` | No | Poll interval (default `120000` = 2 min). Use `60000` for faster play detail catch-up. |
+| `POLL_INTERVAL_MS` | No | Active poll interval when any game is Preview/Live (default `120000` = 2 min). Use `60000` for faster play detail catch-up. |
+| `POLL_IDLE_INTERVAL_MS` | No | Idle poll interval when the slate is all Final or empty (default `600000` = 10 min). Still checks the schedule so a new slate is noticed. |
 | `LIVE_FEED_RETRIES` | No | Retries when loading play-by-play after a score change (default `4`) |
 | `LIVE_FEED_RETRY_MS` | No | Delay between live feed retries in ms (default `800`) |
 | `PLAY_DETAIL_MAX_RETRIES` | No | Poll cycles to backfill missing play details (default `8`) |
-| `GAME_DAY_TZ` | No | Timezone for "today" (default `America/New_York`) |
-| `POLL_START_HOUR` | No | Start hour for polling window, 24h (default `11`) |
-| `POLL_END_HOUR` | No | Stop hour, exclusive (default `2` = run through 1:59 AM). Use `2` or `3` for after-midnight—not `0` (that means stop at midnight). With `11` start, window crosses midnight automatically. |
+| `GAME_DAY_TZ` | No | Timezone for "today" / "yesterday" date boundaries (default `America/New_York`) |
 
 ## Hosting
 

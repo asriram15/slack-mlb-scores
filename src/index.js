@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { App } from '@slack/bolt';
-import { fetchGamesForPolling, groupGames } from './mlb.js';
+import { fetchTodaysGames, groupGames } from './mlb.js';
 import { buildScoreboardBlocks } from './format.js';
 import { startPoller } from './poller.js';
 import {
@@ -48,7 +48,7 @@ app.command('/scores', async ({ ack, respond, command }) => {
   }
 
   try {
-    const games = await fetchGamesForPolling(TZ, teamId ?? undefined);
+    const games = await fetchTodaysGames(TZ, teamId ?? undefined);
     const groups = groupGames(games);
     const teamName = teamId ? getTeamName(teamId) : null;
     const blocks = buildScoreboardBlocks(groups, {

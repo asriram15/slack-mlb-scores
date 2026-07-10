@@ -129,8 +129,8 @@ export async function fetchTodaysGames(timeZone = 'America/New_York', teamId) {
 }
 
 /**
- * Games to poll or show on the scoreboard. After midnight (until POLL_END_HOUR),
- * also includes yesterday's slate so west-coast games still in progress are tracked.
+ * Games to poll for channel alerts. Always merges today's and yesterday's
+ * schedules so west-coast games still in progress after midnight are tracked.
  * @param {string} [timeZone]
  * @param {number} [teamId]
  * @param {Date} [now]
@@ -142,21 +142,11 @@ export async function fetchGamesForPolling(
   now = new Date(),
 ) {
   const today = todayInTimezone(timeZone, now);
-  const todayGames = await fetchGamesForDate(today, teamId);
-
-  const start = Number(process.env.POLL_START_HOUR ?? 11);
-  const end = Number(process.env.POLL_END_HOUR ?? 2);
-  const hour = hourInTimezone(timeZone, now);
-
-  // Overnight leg (e.g. 11:00 → 02:00): after midnight, live games may still
-  // be listed under yesterday's schedule date.
-  const inOvernightLeg = start > end && hour < end;
-  if (!inOvernightLeg) {
-    return todayGames;
-  }
-
   const yesterday = yesterdayInTimezone(timeZone, now);
-  const yesterdayGames = await fetchGamesForDate(yesterday, teamId);
+  const [todayGames, yesterdayGames] = await Promise.all([
+    fetchGamesForDate(today, teamId),
+    fetchGamesForDate(yesterday, teamId),
+  ]);
   return mergeGamesByPk(yesterdayGames, todayGames);
 }
 

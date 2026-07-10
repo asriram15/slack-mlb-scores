@@ -15,11 +15,22 @@ import {
   buildPlayAlertContexts,
   maxAtBatIndex,
 } from './plays.js';
-import { isWithinPollWindow, describePollWindow } from './poll-window.js';
 
 const TZ = () => process.env.GAME_DAY_TZ ?? 'America/New_York';
-const INTERVAL = () =>
-  Number(process.env.POLL_INTERVAL_MS ?? 120_000);
+const INTERVAL = () => Number(process.env.POLL_INTERVAL_MS ?? 120_000);
+const IDLE_INTERVAL = () =>
+  Number(process.env.POLL_IDLE_INTERVAL_MS ?? 600_000);
+
+/**
+ * True when any game is still scheduled or in progress.
+ * @param {import('./format.js').GameSummary[]} games
+ * @returns {boolean}
+ */
+export function hasUnfinishedGames(games) {
+  return games.some(
+    (g) => g.abstractState === 'Preview' || g.abstractState === 'Live',
+  );
+}
 
 /**
  * @param {number} gamePk
@@ -215,20 +226,9 @@ async function postScoreAlerts(app, channelId, game, alerts, meta) {
 /**
  * @param {import('@slack/bolt').App} app
  * @param {string} channelId
+ * @param {import('./format.js').GameSummary[]} games
  */
-export async function pollOnce(app, channelId) {
-  if (!isWithinPollWindow()) {
-    return;
-  }
-
-  let games;
-  try {
-    games = await fetchGamesForPolling(TZ());
-  } catch (err) {
-    console.error('[poller] MLB fetch failed:', err.message);
-    return;
-  }
-
+async function processGames(app, channelId, games) {
   for (const game of games) {
     if (game.abstractState === 'Live') {
       await tryResolvePendingPlayDetails(app, channelId, game);
@@ -301,14 +301,67 @@ export async function pollOnce(app, channelId) {
 }
 
 /**
+ * Fetch schedule; process alerts when the slate is active (or was on the
+ * previous tick, so a last-game Final transition still posts).
  * @param {import('@slack/bolt').App} app
  * @param {string} channelId
- * @returns {NodeJS.Timeout}
+ * @param {{ processIfIdle?: boolean }} [opts]
+ * @returns {Promise<boolean>} true if any Preview/Live games remain
+ */
+export async function pollOnce(app, channelId, opts = {}) {
+  const processIfIdle = opts.processIfIdle ?? true;
+
+  let games;
+  try {
+    games = await fetchGamesForPolling(TZ());
+  } catch (err) {
+    console.error('[poller] MLB fetch failed:', err.message);
+    return false;
+  }
+
+  const unfinished = hasUnfinishedGames(games);
+  if (unfinished || processIfIdle) {
+    await processGames(app, channelId, games);
+  }
+
+  return unfinished;
+}
+
+/**
+ * @param {import('@slack/bolt').App} app
+ * @param {string} channelId
+ * @returns {{ stop: () => void }}
  */
 export function startPoller(app, channelId) {
-  const ms = INTERVAL();
-  console.log(`[poller] started (every ${ms / 1000}s, window ${describePollWindow()})`);
+  const activeMs = INTERVAL();
+  const idleMs = IDLE_INTERVAL();
+  console.log(
+    `[poller] started (active every ${activeMs / 1000}s when Preview/Live, idle every ${idleMs / 1000}s)`,
+  );
 
-  pollOnce(app, channelId);
-  return setInterval(() => pollOnce(app, channelId), ms);
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let timer = null;
+  /** Process even when idle on the first tick (seed fingerprints) and once after the slate finishes (Final alerts). */
+  let processIfIdle = true;
+  let stopped = false;
+
+  const schedule = (ms) => {
+    if (stopped) return;
+    timer = setTimeout(run, ms);
+  };
+
+  const run = async () => {
+    const unfinished = await pollOnce(app, channelId, { processIfIdle });
+    processIfIdle = unfinished;
+    schedule(unfinished ? INTERVAL() : IDLE_INTERVAL());
+  };
+
+  run();
+
+  return {
+    stop() {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    },
+  };
 }
