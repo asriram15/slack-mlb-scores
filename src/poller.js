@@ -1,5 +1,9 @@
 import { fetchGamesForPolling, fetchLiveFeedWithRetry } from './mlb.js';
-import { formatChangeAlert, formatPlayFollowUp } from './format.js';
+import {
+  formatChangeAlert,
+  formatPlayFollowUp,
+  isNonResultFinal,
+} from './format.js';
 import {
   detectChange,
   getLastPlayIndex,
@@ -245,15 +249,17 @@ async function processGames(app, channelId, games) {
     if (!change) continue;
 
     const isFinal = game.abstractState === 'Final';
+    const nonResult = isNonResultFinal(game);
     const shouldPost =
       change.scoreChanged || (isFinal && change.statusChanged);
     if (!shouldPost) continue;
 
-    const isFinalTransition = isFinal && change.statusChanged;
+    // Postponed/cancelled are abstract Final but have no result or plays.
+    const isFinalTransition = isFinal && change.statusChanged && !nonResult;
 
     /** @type {import('./plays.js').PlayAlertWithScore[]} */
     let alerts = [];
-    if (change.scoreChanged || isFinalTransition) {
+    if (!nonResult && (change.scoreChanged || isFinalTransition)) {
       try {
         alerts = await fetchPlayContextsForAlert(game.gamePk, game, {
           scoreChanged: change.scoreChanged,

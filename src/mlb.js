@@ -1,3 +1,5 @@
+import { isNonResultFinal } from './format.js';
+
 const MLB_BASE = 'https://statsapi.mlb.com/api/v1';
 const MLB_LIVE_BASE = 'https://statsapi.mlb.com/api/v1.1';
 
@@ -90,6 +92,8 @@ export function normalizeGame(game) {
     outs: linescore.outs ?? null,
     abstractState: status.abstractGameState ?? 'Unknown',
     detailedState: status.detailedState ?? status.abstractGameState ?? 'Unknown',
+    statusReason: status.reason ?? null,
+    codedState: status.codedGameState ?? null,
     startTime: game.gameDate ?? null,
   };
 }
@@ -189,17 +193,26 @@ export async function fetchLiveFeedWithRetry(gamePk, opts = {}) {
 
 /**
  * @param {import('./format.js').GameSummary[]} games
- * @returns {{ live: GameSummary[], preview: GameSummary[], final: GameSummary[] }}
+ * @returns {{
+ *   live: import('./format.js').GameSummary[],
+ *   preview: import('./format.js').GameSummary[],
+ *   final: import('./format.js').GameSummary[],
+ *   postponed: import('./format.js').GameSummary[],
+ * }}
  */
 export function groupGames(games) {
   const live = [];
   const preview = [];
   const final = [];
+  const postponed = [];
 
   for (const g of games) {
     if (g.abstractState === 'Live') live.push(g);
     else if (g.abstractState === 'Preview') preview.push(g);
-    else if (g.abstractState === 'Final') final.push(g);
+    else if (g.abstractState === 'Final') {
+      if (isNonResultFinal(g)) postponed.push(g);
+      else final.push(g);
+    }
   }
 
   const byStart = (a, b) =>
@@ -207,8 +220,9 @@ export function groupGames(games) {
 
   preview.sort(byStart);
   final.sort(byStart);
+  postponed.sort(byStart);
 
-  return { live, preview, final };
+  return { live, preview, final, postponed };
 }
 
 /** CLI: npm run test:mlb */
@@ -228,7 +242,7 @@ if (isCli) {
 
   try {
     const games = await fetchTodaysGames(tz, teamId ?? undefined);
-    const { live, preview, final } = groupGames(games);
+    const { live, preview, final, postponed } = groupGames(games);
 
     const { getTeamAbbrev } = await import('./teams.js');
     const abbrev = teamId ? getTeamAbbrev(teamId) : null;
@@ -257,6 +271,7 @@ if (isCli) {
     print('Live', live);
     print('Scheduled', preview);
     print('Final', final);
+    print('Postponed', postponed);
   } catch (err) {
     console.error(err.message);
     process.exit(1);
@@ -275,6 +290,12 @@ function formatGameLine(g) {
         })
       : 'TBD';
     return `${away} @ ${home} · ${time}`;
+  }
+  if (isNonResultFinal(g)) {
+    const status = g.statusReason
+      ? `${g.detailedState} (${g.statusReason})`
+      : g.detailedState;
+    return `${away} @ ${home} · ${status}`;
   }
   const score = `${away} ${g.awayScore} – ${home} ${g.homeScore}`;
   if (g.abstractState === 'Live') {

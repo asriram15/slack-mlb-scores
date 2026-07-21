@@ -14,8 +14,36 @@
  * @property {number|null} outs
  * @property {string} abstractState
  * @property {string} detailedState
+ * @property {string|null} [statusReason]
+ * @property {string|null} [codedState]
  * @property {string|null} startTime
  */
+
+/**
+ * Postponed/cancelled games are abstract Final at 0–0; treat them separately.
+ * @param {GameSummary} g
+ * @returns {boolean}
+ */
+export function isNonResultFinal(g) {
+  const detailed = (g.detailedState ?? '').toLowerCase();
+  const coded = (g.codedState ?? '').toUpperCase();
+  return (
+    coded === 'D' ||
+    coded === 'C' ||
+    detailed.startsWith('postponed') ||
+    detailed.startsWith('cancelled') ||
+    detailed.startsWith('canceled')
+  );
+}
+
+/**
+ * @param {GameSummary} g
+ * @returns {string} e.g. "Postponed (Rain)"
+ */
+export function formatNonResultStatus(g) {
+  const label = g.detailedState || 'Postponed';
+  return g.statusReason ? `${label} (${g.statusReason})` : label;
+}
 
 const TZ = () => process.env.GAME_DAY_TZ ?? 'America/New_York';
 
@@ -101,6 +129,10 @@ export function formatGameMrkdwn(g) {
     return `*${away}* @ *${home}* · ${time}`;
   }
 
+  if (isNonResultFinal(g)) {
+    return `*${away}* @ *${home}* · *${formatNonResultStatus(g)}*`;
+  }
+
   const score = `*${away}* ${g.awayScore} – *${home}* ${g.homeScore}`;
 
   if (g.abstractState === 'Live') {
@@ -132,6 +164,11 @@ export function formatGameMrkdwn(g) {
 export function formatChangeAlert(g, opts = {}) {
   const away = awayLabel(g);
   const home = homeLabel(g);
+
+  if (isNonResultFinal(g)) {
+    return `${away} @ ${home}\n*${formatNonResultStatus(g)}*`;
+  }
+
   const score = `${away} ${g.awayScore} – ${home} ${g.homeScore}`;
   const lines = [score];
 
@@ -169,13 +206,18 @@ export function formatPlayFollowUp(g, playContext) {
 }
 
 /**
- * @param {{ live: GameSummary[], preview: GameSummary[], final: GameSummary[] }} groups
+ * @param {{
+ *   live: GameSummary[],
+ *   preview: GameSummary[],
+ *   final: GameSummary[],
+ *   postponed?: GameSummary[],
+ * }} groups
  * @param {{ teamName?: string|null, teamAbbrev?: string|null, teamId?: number|null }} [opts]
  * @returns {object[]} Slack Block Kit blocks
  */
 export function buildScoreboardBlocks(groups, opts = {}) {
-  const { live, preview, final } = groups;
-  const total = live.length + preview.length + final.length;
+  const { live, preview, final, postponed = [] } = groups;
+  const total = live.length + preview.length + final.length + postponed.length;
   const teamName = opts.teamName ?? null;
   const teamAbbrev = opts.teamAbbrev ?? null;
   const teamLabel =
@@ -228,6 +270,7 @@ export function buildScoreboardBlocks(groups, opts = {}) {
   addSection('Live', live);
   addSection('Scheduled', preview);
   addSection('Final', final);
+  addSection('Postponed', postponed);
 
   return blocks;
 }
@@ -245,10 +288,14 @@ function groupGamesFallback(games) {
   const live = [];
   const preview = [];
   const final = [];
+  const postponed = [];
   for (const g of games) {
     if (g.abstractState === 'Live') live.push(g);
     else if (g.abstractState === 'Preview') preview.push(g);
-    else if (g.abstractState === 'Final') final.push(g);
+    else if (g.abstractState === 'Final') {
+      if (isNonResultFinal(g)) postponed.push(g);
+      else final.push(g);
+    }
   }
-  return { live, preview, final };
+  return { live, preview, final, postponed };
 }
