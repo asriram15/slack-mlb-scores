@@ -385,7 +385,7 @@ async function tryResolvePendingVideos(app) {
         continue;
       }
 
-      const text = formatHighlightReply(item, url);
+      const text = formatHighlightReply(url);
       try {
         await app.client.chat.postMessage({
           channel: entry.channelId,

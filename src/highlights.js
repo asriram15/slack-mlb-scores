@@ -84,16 +84,11 @@ export function pickPlaybackUrl(playbacks) {
 }
 
 /**
- * @param {HighlightItem} item
  * @param {string} url
  * @returns {string}
  */
-export function formatHighlightReply(item, url) {
-  const title = item.title?.trim();
-  if (title) {
-    return `${title}\n<${url}|Watch highlight>`;
-  }
-  return `<${url}|Watch highlight>`;
+export function formatHighlightReply(url) {
+  return url;
 }
 
 /**
