@@ -52,6 +52,19 @@ export function isScoringPlay(play) {
 }
 
 /**
+ * False while an at-bat is still open (e.g. wild pitch before the walk finishes).
+ * @param {object} [play]
+ * @returns {boolean}
+ */
+export function isPlayComplete(play) {
+  if (!play) return false;
+  if (play.about?.isComplete === true) return true;
+  if (play.about?.isComplete === false) return false;
+  const event = play.result?.event ?? play.result?.eventType;
+  return Boolean(event);
+}
+
+/**
  * Find the scoring play that produced the current scoreboard line.
  * @param {object[]} allPlays
  * @param {number} awayScore
@@ -291,7 +304,23 @@ export function formatEndingPlayContext(play) {
  * @property {number} homeScore
  * @property {number|null} [inning]
  * @property {string|null} [inningHalf]
+ * @property {string|null} [playId] - MLB pitch/event id for highlight matching
  */
+
+/**
+ * UUID on the decisive pitch/event — used to join MLB highlight clips.
+ * @param {object} [play]
+ * @returns {string|null}
+ */
+export function extractPlayId(play) {
+  const events = play?.playEvents;
+  if (!Array.isArray(events) || events.length === 0) return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const id = events[i]?.playId;
+    if (typeof id === 'string' && id.length > 0) return id;
+  }
+  return null;
+}
 
 /**
  * Build one alert per scoring play in the poll gap (plus ending context on final).
@@ -360,6 +389,7 @@ export function buildPlayAlertContexts(
         homeScore,
         inning: play.about?.inning ?? null,
         inningHalf: halfInningLabel(play),
+        playId: extractPlayId(play),
       });
     }
   }
@@ -383,6 +413,7 @@ export function buildPlayAlertContexts(
           homeScore: game.homeScore,
           inning: lastPlay.about?.inning ?? game.inning,
           inningHalf: halfInningLabel(lastPlay) ?? game.inningHalf,
+          playId: extractPlayId(lastPlay),
         };
         if (lastAlert && lastAlert.atBatIndex === walkoff.atBatIndex) {
           alerts[alerts.length - 1] = walkoff;
@@ -393,6 +424,7 @@ export function buildPlayAlertContexts(
             ...lastAlert,
             kind: 'walkoff',
             text: walkoff.text,
+            playId: walkoff.playId ?? lastAlert.playId,
           };
         }
         return alerts;
@@ -410,6 +442,7 @@ export function buildPlayAlertContexts(
           homeScore: game.homeScore,
           inning: lastPlay?.about?.inning ?? game.inning,
           inningHalf: halfInningLabel(lastPlay) ?? game.inningHalf,
+          playId: extractPlayId(lastPlay),
         });
       } else {
         // Keep scoring alerts; final banner is applied by the poller on the last post.
