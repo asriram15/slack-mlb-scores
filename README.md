@@ -151,43 +151,6 @@ pm2 status
 
 You should see `Slack MLB Scores bot is running (Socket Mode)` and `[poller] started`.
 
-#### 5. Deploy updates later
-
-From your Mac:
-
-```bash
-rsync -avz --exclude node_modules --exclude .env \
-  ~/slack-mlb-scores/ ubuntu@VM_IP:~/slack-mlb-scores/
-ssh ubuntu@VM_IP 'cd ~/slack-mlb-scores && npm install --omit=dev && pm2 restart mlb-scores'
-```
-
-#### Oracle tips
-
-- **Cost:** keep the shape at **A1 Flex** within Always Free limits; do not add block storage or paid load balancers unless you intend to pay.
-- **Idle reclamation:** Oracle may reclaim rarely used free VMs; light polling keeps the instance active.
-- **Secrets:** never commit `.env`; it stays only on the VM.
-
-### Local (fastest to try)
-
-Run `npm start` on a machine that stays awake during games. Use `pm2` if you want auto-restart on the same Mac.
-
-### Fly.io (~$0–5/mo)
-
-Requires [flyctl](https://fly.io/docs/hands-on/install-flyctl/).
-
-```bash
-cd slack-mlb-scores
-fly launch --no-deploy
-fly secrets set SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-... SLACK_SCORES_CHANNEL_ID=C...
-fly deploy
-```
-
-The included `Dockerfile` runs a single Node process.
-
-### Not recommended
-
-**Render free tier** sleeps idle services, which disconnects Socket Mode and misses score updates.
-
 ## Project layout
 
 ```
