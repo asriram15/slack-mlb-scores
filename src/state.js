@@ -12,8 +12,48 @@ const gameState = new Map();
 /** @type {Map<number, { awayScore: number, homeScore: number, attempts: number }>} */
 const pendingPlayDetails = new Map();
 
+/**
+ * Score changed on an at-bat that is still open (WP during PA, etc.).
+ * @typedef {object} PendingIncompleteAtBat
+ * @property {number} awayScore
+ * @property {number} homeScore
+ * @property {number} prevAwayScore
+ * @property {number} prevHomeScore
+ * @property {number} attempts
+ */
+
+/** @type {Map<number, PendingIncompleteAtBat>} */
+const pendingIncompleteAtBats = new Map();
+
+/**
+ * Score-alert parents waiting for an MLB highlight clip.
+ * Keyed by `${channelId}:${threadTs}`.
+ * @typedef {object} PendingVideo
+ * @property {string} channelId
+ * @property {string} threadTs
+ * @property {number} gamePk
+ * @property {string} playId
+ * @property {number} attempts
+ */
+
+/** @type {Map<string, PendingVideo>} */
+const pendingVideos = new Map();
+
 const MAX_PENDING_ATTEMPTS = () =>
   Number(process.env.PLAY_DETAIL_MAX_RETRIES ?? 8);
+
+/** Highlight clips often lag the live feed by several minutes. */
+const MAX_VIDEO_ATTEMPTS = () =>
+  Number(process.env.VIDEO_HIGHLIGHT_MAX_RETRIES ?? 20);
+
+/**
+ * @param {string} channelId
+ * @param {string} threadTs
+ * @returns {string}
+ */
+function videoKey(channelId, threadTs) {
+  return `${channelId}:${threadTs}`;
+}
 
 /**
  * @param {string} fp
@@ -107,6 +147,117 @@ export function advanceLastPlayIndex(gamePk, atBatIndex) {
 export function resetState() {
   gameState.clear();
   pendingPlayDetails.clear();
+  pendingIncompleteAtBats.clear();
+  pendingVideos.clear();
+}
+
+/**
+ * @param {number} gamePk
+ * @param {number} awayScore
+ * @param {number} homeScore
+ * @param {number} prevAwayScore
+ * @param {number} prevHomeScore
+ */
+export function markPendingIncompleteAtBat(
+  gamePk,
+  awayScore,
+  homeScore,
+  prevAwayScore,
+  prevHomeScore,
+) {
+  pendingIncompleteAtBats.set(gamePk, {
+    awayScore,
+    homeScore,
+    prevAwayScore,
+    prevHomeScore,
+    attempts: 0,
+  });
+}
+
+/**
+ * @param {number} gamePk
+ */
+export function clearPendingIncompleteAtBat(gamePk) {
+  pendingIncompleteAtBats.delete(gamePk);
+}
+
+/**
+ * @param {number} gamePk
+ * @returns {PendingIncompleteAtBat|null}
+ */
+export function getPendingIncompleteAtBat(gamePk) {
+  return pendingIncompleteAtBats.get(gamePk) ?? null;
+}
+
+/**
+ * @param {number} gamePk
+ * @returns {boolean} true if exceeded max retries and was cleared
+ */
+export function incrementPendingIncompleteAttempts(gamePk) {
+  const pending = pendingIncompleteAtBats.get(gamePk);
+  if (!pending) return false;
+  pending.attempts += 1;
+  if (pending.attempts >= MAX_PENDING_ATTEMPTS()) {
+    pendingIncompleteAtBats.delete(gamePk);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * @param {string} channelId
+ * @param {string} threadTs
+ * @param {number} gamePk
+ * @param {string} playId
+ */
+export function markPendingVideo(channelId, threadTs, gamePk, playId) {
+  if (!channelId || !threadTs || !playId) return;
+  pendingVideos.set(videoKey(channelId, threadTs), {
+    channelId,
+    threadTs,
+    gamePk,
+    playId,
+    attempts: 0,
+  });
+}
+
+/**
+ * @param {string} channelId
+ * @param {string} threadTs
+ */
+export function clearPendingVideo(channelId, threadTs) {
+  pendingVideos.delete(videoKey(channelId, threadTs));
+}
+
+/**
+ * @returns {PendingVideo[]}
+ */
+export function listPendingVideos() {
+  return [...pendingVideos.values()];
+}
+
+/**
+ * @returns {boolean}
+ */
+export function hasPendingVideos() {
+  return pendingVideos.size > 0;
+}
+
+/**
+ * @param {string} channelId
+ * @param {string} threadTs
+ * @returns {boolean} true if exceeded max retries and was cleared
+ */
+export function incrementPendingVideoAttempts(channelId, threadTs) {
+  const key = videoKey(channelId, threadTs);
+  const pending = pendingVideos.get(key);
+  if (!pending) return false;
+  pending.attempts += 1;
+  if (pending.attempts >= MAX_VIDEO_ATTEMPTS()) {
+    pendingVideos.delete(key);
+    return true;
+  }
+  return false;
 }
 
 /**
