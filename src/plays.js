@@ -222,15 +222,55 @@ export function parseScoringPlay(play) {
 }
 
 /**
+ * @param {string} [event]
+ * @returns {boolean}
+ */
+function isHomeRunEvent(event) {
+  if (!event) return false;
+  return /home\s*run/i.test(event) || event === 'home_run' || event === 'hr';
+}
+
+/**
+ * Embed RBI count in the HR label so the batter isn't repeated as a scorer.
+ * @param {number} rbi
+ * @param {number} scorerCount
+ * @returns {string}
+ */
+function homeRunEventLabel(rbi, scorerCount) {
+  const runs = rbi > 0 ? rbi : scorerCount > 0 ? scorerCount : 1;
+  if (runs >= 4) return 'grand slam';
+  if (runs === 3) return '3-run Home Run';
+  if (runs === 2) return '2-run Home Run';
+  return 'solo Home Run';
+}
+
+/**
  * @param {ScoringPlayContext} ctx
  * @returns {string}
  */
 export function formatScoringContext(ctx) {
+  // HRs: RBI count in the event label; list other scorers only (not the batter).
+  if (isHomeRunEvent(ctx.event)) {
+    const label = homeRunEventLabel(ctx.rbi ?? 0, ctx.scorers.length);
+    const hitLine = `${ctx.batter} (${label}) off ${ctx.pitcher}`;
+    const otherScorers = ctx.scorers.filter((name) => name !== ctx.batter);
+    if (otherScorers.length === 0) return hitLine;
+    const runLine =
+      otherScorers.length === 1
+        ? `${otherScorers[0]} scores`
+        : `${otherScorers.join(', ')} score`;
+    return `${hitLine} · ${runLine}`;
+  }
+
   const hitLine = `${ctx.batter} (${ctx.event}) off ${ctx.pitcher}`;
 
   let runLine;
   if (ctx.scorers.length === 1) {
-    runLine = `${ctx.scorers[0]} scores`;
+    // Sole scorer is usually a runner, not the batter (non-HR).
+    runLine =
+      ctx.scorers[0] === ctx.batter
+        ? 'scores'
+        : `${ctx.scorers[0]} scores`;
   } else if (ctx.scorers.length > 1) {
     runLine = `${ctx.scorers.join(', ')} score`;
   } else if (ctx.rbi > 0) {
