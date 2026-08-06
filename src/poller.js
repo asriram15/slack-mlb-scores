@@ -1,9 +1,5 @@
 import { fetchGamesForPolling, fetchLiveFeedWithRetry } from './mlb.js';
-import {
-  formatChangeAlert,
-  formatPlayFollowUp,
-  isNonResultFinal,
-} from './format.js';
+import { formatChangeAlert, isNonResultFinal } from './format.js';
 import {
   detectChange,
   getLastPlayIndex,
@@ -24,7 +20,6 @@ import {
   incrementPendingVideoAttempts,
 } from './state.js';
 import {
-  buildPlayAlertContext,
   buildPlayAlertContexts,
   findScoringPlaysInGap,
   isPlayComplete,
@@ -116,38 +111,7 @@ async function fetchPlayContextsForAlert(
 }
 
 /**
- * Legacy single-alert path used by pending play-detail follow-ups.
- * @param {number} gamePk
- * @param {import('./format.js').GameSummary} game
- * @param {{ scoreChanged: boolean, isFinalTransition: boolean }} opts
- * @returns {Promise<import('./plays.js').PlayAlertContext|null>}
- */
-async function fetchPlayContextForAlert(
-  gamePk,
-  game,
-  { scoreChanged, isFinalTransition },
-) {
-  const feed = await fetchLiveFeedWithRetry(gamePk);
-  const allPlays = feed.liveData?.plays?.allPlays ?? [];
-  const sinceIndex = getLastPlayIndex(gamePk);
-
-  const alert = buildPlayAlertContext(allPlays, {
-    scoreChanged,
-    isFinalTransition,
-    sinceIndex,
-    game,
-  });
-
-  if (alert) {
-    setLastPlayIndex(gamePk, alert.atBatIndex);
-    advanceLastPlayIndex(gamePk, maxAtBatIndex(allPlays));
-    return alert;
-  }
-
-  return null;
-}
-
-/**
+ * Post a held score alert once play-by-play catches up (or we give up).
  * @param {import('@slack/bolt').App} app
  * @param {string} channelId
  * @param {import('./format.js').GameSummary} game
@@ -156,6 +120,7 @@ async function tryResolvePendingPlayDetails(app, channelId, game) {
   const pending = getPendingPlayDetails(game.gamePk);
   if (!pending) return;
 
+  // Score moved again — normal change detection will rebuild the gap.
   if (
     pending.awayScore !== game.awayScore ||
     pending.homeScore !== game.homeScore
@@ -164,38 +129,63 @@ async function tryResolvePendingPlayDetails(app, channelId, game) {
     return;
   }
 
-  if (incrementPendingAttempts(game.gamePk)) {
+  const gaveUp = incrementPendingAttempts(game.gamePk);
+  if (gaveUp) {
     console.log(
-      `[poller] gave up play details for game ${game.gamePk} after max retries`,
+      `[poller] gave up play details for game ${game.gamePk}; posting score only`,
     );
+    try {
+      await postScoreAlerts(app, channelId, game, [], {
+        scoreChanged: true,
+        statusChanged: false,
+        isFinalTransition: false,
+      });
+    } catch (err) {
+      console.error('[poller] play-details give-up Slack post failed:', err.message);
+    }
     return;
   }
 
-  let alert;
+  /** @type {{ alerts: import('./plays.js').PlayAlertWithScore[], holdIncomplete: boolean }} */
+  let resolved;
   try {
-    alert = await fetchPlayContextForAlert(game.gamePk, game, {
+    resolved = await fetchPlayContextsForAlert(game.gamePk, game, {
       scoreChanged: true,
       isFinalTransition: false,
+      prevAwayScore: pending.prevAwayScore,
+      prevHomeScore: pending.prevHomeScore,
     });
   } catch (err) {
     console.error(`[poller] pending retry ${game.gamePk}:`, err.message);
     return;
   }
 
-  if (!alert) return;
+  if (resolved.holdIncomplete) {
+    clearPendingPlayDetails(game.gamePk);
+    markPendingIncompleteAtBat(
+      game.gamePk,
+      game.awayScore,
+      game.homeScore,
+      pending.prevAwayScore,
+      pending.prevHomeScore,
+    );
+    console.log(
+      `[poller] holding ${game.awayAbbrev}@${game.homeAbbrev} ${game.awayScore}-${game.homeScore} until at-bat completes`,
+    );
+    return;
+  }
+
+  if (!resolved.alerts.length) return;
 
   clearPendingPlayDetails(game.gamePk);
-  const text = formatPlayFollowUp(game, alert.text);
-
   try {
-    await app.client.chat.postMessage({
-      channel: channelId,
-      text,
-      unfurl_links: false,
+    await postScoreAlerts(app, channelId, game, resolved.alerts, {
+      scoreChanged: true,
+      statusChanged: false,
+      isFinalTransition: false,
     });
-    console.log('[poller] posted play follow-up:', text.replace(/\n/g, ' | '));
   } catch (err) {
-    console.error('[poller] Slack follow-up failed:', err.message);
+    console.error('[poller] play-details Slack post failed:', err.message);
   }
 }
 
@@ -483,10 +473,13 @@ async function processGames(app, channelId, games) {
             game.gamePk,
             game.awayScore,
             game.homeScore,
+            change.prevAwayScore,
+            change.prevHomeScore,
           );
           console.log(
-            `[poller] play details pending for ${game.awayAbbrev} @ ${game.homeAbbrev} ${game.awayScore}-${game.homeScore}`,
+            `[poller] holding ${game.awayAbbrev}@${game.homeAbbrev} ${game.awayScore}-${game.homeScore} until play details arrive`,
           );
+          continue;
         }
       } catch (err) {
         console.error(
@@ -498,7 +491,13 @@ async function processGames(app, channelId, games) {
             game.gamePk,
             game.awayScore,
             game.homeScore,
+            change.prevAwayScore,
+            change.prevHomeScore,
           );
+          console.log(
+            `[poller] holding ${game.awayAbbrev}@${game.homeAbbrev} ${game.awayScore}-${game.homeScore} until play details arrive`,
+          );
+          continue;
         }
       }
     }

@@ -9,7 +9,17 @@ import { gameFingerprint } from './format.js';
 /** @type {Map<number, GameStateEntry>} */
 const gameState = new Map();
 
-/** @type {Map<number, { awayScore: number, homeScore: number, attempts: number }>} */
+/**
+ * Score changed but live play-by-play was not ready yet.
+ * @typedef {object} PendingPlayDetails
+ * @property {number} awayScore
+ * @property {number} homeScore
+ * @property {number} prevAwayScore
+ * @property {number} prevHomeScore
+ * @property {number} attempts
+ */
+
+/** @type {Map<number, PendingPlayDetails>} */
 const pendingPlayDetails = new Map();
 
 /**
@@ -264,9 +274,23 @@ export function incrementPendingVideoAttempts(channelId, threadTs) {
  * @param {number} gamePk
  * @param {number} awayScore
  * @param {number} homeScore
+ * @param {number} prevAwayScore
+ * @param {number} prevHomeScore
  */
-export function markPendingPlayDetails(gamePk, awayScore, homeScore) {
-  pendingPlayDetails.set(gamePk, { awayScore, homeScore, attempts: 0 });
+export function markPendingPlayDetails(
+  gamePk,
+  awayScore,
+  homeScore,
+  prevAwayScore,
+  prevHomeScore,
+) {
+  pendingPlayDetails.set(gamePk, {
+    awayScore,
+    homeScore,
+    prevAwayScore,
+    prevHomeScore,
+    attempts: 0,
+  });
 }
 
 /**
@@ -278,7 +302,7 @@ export function clearPendingPlayDetails(gamePk) {
 
 /**
  * @param {number} gamePk
- * @returns {{ awayScore: number, homeScore: number, attempts: number }|null}
+ * @returns {PendingPlayDetails|null}
  */
 export function getPendingPlayDetails(gamePk) {
   return pendingPlayDetails.get(gamePk) ?? null;
