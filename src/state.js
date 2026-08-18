@@ -43,6 +43,7 @@ const pendingIncompleteAtBats = new Map();
  * @property {string} threadTs
  * @property {number} gamePk
  * @property {string} playId
+ * @property {string|null} [playLabel] - human-readable play context for logs
  * @property {number} attempts
  */
 
@@ -219,16 +220,27 @@ export function incrementPendingIncompleteAttempts(gamePk) {
  * @param {string} threadTs
  * @param {number} gamePk
  * @param {string} playId
+ * @param {string|null} [playLabel]
  */
-export function markPendingVideo(channelId, threadTs, gamePk, playId) {
+export function markPendingVideo(channelId, threadTs, gamePk, playId, playLabel = null) {
   if (!channelId || !threadTs || !playId) return;
   pendingVideos.set(videoKey(channelId, threadTs), {
     channelId,
     threadTs,
     gamePk,
     playId,
+    playLabel: playLabel || null,
     attempts: 0,
   });
+}
+
+/**
+ * Label for logs: prefer play text, fall back to playId.
+ * @param {{ playLabel?: string|null, playId?: string|null }} entry
+ * @returns {string}
+ */
+export function pendingVideoLabel(entry) {
+  return entry?.playLabel || entry?.playId || 'unknown play';
 }
 
 /**

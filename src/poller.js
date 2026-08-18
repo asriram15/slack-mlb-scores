@@ -18,6 +18,7 @@ import {
   listPendingVideos,
   hasPendingVideos,
   incrementPendingVideoAttempts,
+  pendingVideoLabel,
 } from './state.js';
 import {
   buildPlayAlertContexts,
@@ -317,9 +318,15 @@ async function postScoreAlerts(app, channelId, game, alerts, meta) {
     console.log('[poller] posted:', text.replace(/\n/g, ' | '));
 
     if (alert.playId && result?.ts) {
-      markPendingVideo(channelId, result.ts, game.gamePk, alert.playId);
+      markPendingVideo(
+        channelId,
+        result.ts,
+        game.gamePk,
+        alert.playId,
+        alert.text,
+      );
       console.log(
-        `[poller] highlight pending for ${game.awayAbbrev}@${game.homeAbbrev} play ${alert.playId}`,
+        `[poller] highlight pending for ${game.awayAbbrev}@${game.homeAbbrev}: ${alert.text}`,
       );
     }
   }
@@ -353,7 +360,7 @@ async function tryResolvePendingVideos(app) {
           incrementPendingVideoAttempts(entry.channelId, entry.threadTs)
         ) {
           console.log(
-            `[poller] gave up highlight for play ${entry.playId} after max retries`,
+            `[poller] gave up highlight for ${pendingVideoLabel(entry)} after max retries`,
           );
         }
       }
@@ -363,13 +370,14 @@ async function tryResolvePendingVideos(app) {
     for (const entry of entries) {
       const item = findHighlightForPlayId(items, entry.playId);
       const url = item ? pickPlaybackUrl(item.playbacks) : null;
+      const label = pendingVideoLabel(entry);
 
       if (!url) {
         if (
           incrementPendingVideoAttempts(entry.channelId, entry.threadTs)
         ) {
           console.log(
-            `[poller] gave up highlight for play ${entry.playId} after max retries`,
+            `[poller] gave up highlight for ${label} after max retries`,
           );
         }
         continue;
@@ -386,19 +394,19 @@ async function tryResolvePendingVideos(app) {
         });
         clearPendingVideo(entry.channelId, entry.threadTs);
         console.log(
-          '[poller] posted highlight reply:',
+          `[poller] posted highlight reply for ${label}:`,
           text.replace(/\n/g, ' | '),
         );
       } catch (err) {
         console.error(
-          `[poller] highlight Slack reply failed for ${entry.playId}:`,
+          `[poller] highlight Slack reply failed for ${label}:`,
           err.message,
         );
         if (
           incrementPendingVideoAttempts(entry.channelId, entry.threadTs)
         ) {
           console.log(
-            `[poller] gave up highlight for play ${entry.playId} after max retries`,
+            `[poller] gave up highlight for ${label} after max retries`,
           );
         }
       }
