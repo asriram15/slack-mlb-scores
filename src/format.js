@@ -1,12 +1,17 @@
 /**
  * @typedef {object} GameSummary
  * @property {number} gamePk
+ * @property {string|null} gameType
  * @property {number|null} awayId
  * @property {number|null} homeId
  * @property {string} awayName
  * @property {string} homeName
  * @property {string} awayAbbrev
  * @property {string} homeAbbrev
+ * @property {string|null} awayProbablePitcher
+ * @property {string|null} homeProbablePitcher
+ * @property {number|null} awaySeriesWins
+ * @property {number|null} homeSeriesWins
  * @property {number} awayScore
  * @property {number} homeScore
  * @property {number|null} inning
@@ -17,6 +22,9 @@
  * @property {string|null} [statusReason]
  * @property {string|null} [codedState]
  * @property {string|null} startTime
+ * @property {string|null} seriesDescription
+ * @property {number|null} seriesGameNumber
+ * @property {number|null} gamesInSeries
  */
 
 /**
@@ -76,6 +84,104 @@ function awayLabel(g) {
  */
 function homeLabel(g) {
   return g.homeAbbrev || g.homeName;
+}
+
+/**
+ * @param {GameSummary} g
+ * @returns {string}
+ */
+export function formatSeriesRecord(g) {
+  if (
+    !['F', 'D', 'L', 'W'].includes(g.gameType ?? '') ||
+    !g.seriesDescription ||
+    g.awaySeriesWins == null ||
+    g.homeSeriesWins == null
+  ) {
+    return '';
+  }
+
+  const away = awayLabel(g);
+  const home = homeLabel(g);
+  if (g.awaySeriesWins === g.homeSeriesWins) {
+    return `Series tied ${g.awaySeriesWins}–${g.homeSeriesWins}`;
+  }
+  if (g.awaySeriesWins > g.homeSeriesWins) {
+    return `${away} leads series ${g.awaySeriesWins}–${g.homeSeriesWins}`;
+  }
+  return `${home} leads series ${g.homeSeriesWins}–${g.awaySeriesWins}`;
+}
+
+/**
+ * One game in the morning schedule post.
+ * @param {GameSummary} g
+ * @returns {string}
+ */
+export function formatDailyScheduleGame(g) {
+  const away = awayLabel(g);
+  const home = homeLabel(g);
+  const time = g.startTime
+    ? new Date(g.startTime).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: TZ(),
+        timeZoneName: 'short',
+      })
+    : 'TBD';
+  const awayPitcher = g.awayProbablePitcher || 'TBD';
+  const homePitcher = g.homeProbablePitcher || 'TBD';
+  const lines = [
+    `*${away}* @ *${home}* · ${time}`,
+    `Probable pitchers: ${awayPitcher} vs. ${homePitcher}`,
+  ];
+
+  if (['F', 'D', 'L', 'W'].includes(g.gameType ?? '') && g.seriesDescription) {
+    const gameNumber = g.seriesGameNumber
+      ? ` · Game ${g.seriesGameNumber}`
+      : '';
+    const seriesRecord = formatSeriesRecord(g);
+    lines.push(
+      `${g.seriesDescription}${gameNumber}${seriesRecord ? ` · ${seriesRecord}` : ''}`,
+    );
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * @param {GameSummary[]} games
+ * @param {string} date - YYYY-MM-DD
+ * @returns {object[]} Slack Block Kit blocks
+ */
+export function buildDailyScheduleBlocks(games, date) {
+  const displayDate = new Date(`${date}T12:00:00Z`).toLocaleDateString(
+    'en-US',
+    {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      timeZone: 'UTC',
+    },
+  );
+
+  const blocks = [
+    {
+      type: 'header',
+      text: {
+        type: 'plain_text',
+        text: `Today's MLB Schedule — ${displayDate}`,
+        emoji: false,
+      },
+    },
+  ];
+
+  for (const game of games) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: formatDailyScheduleGame(game) },
+    });
+  }
+
+  return blocks;
 }
 
 /**

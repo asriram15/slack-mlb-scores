@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { App } from '@slack/bolt';
+import { startDailySchedule } from './daily-schedule.js';
 import { fetchTodaysGames, groupGames } from './mlb.js';
 import { buildScoreboardBlocks } from './format.js';
 import { startPoller } from './poller.js';
@@ -81,4 +82,5 @@ app.command('/scores', async ({ ack, respond, command }) => {
   await app.start();
   console.log('Slack MLB Scores bot is running (Socket Mode)');
   startPoller(app, SCORES_CHANNEL);
+  startDailySchedule(app, SCORES_CHANNEL);
 })();

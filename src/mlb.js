@@ -79,12 +79,17 @@ export function normalizeGame(game) {
 
   return {
     gamePk: game.gamePk,
+    gameType: game.gameType ?? null,
     awayId: away.team?.id ?? null,
     homeId: home.team?.id ?? null,
     awayName: away.team?.name ?? away.team?.teamName ?? 'Away',
     homeName: home.team?.name ?? home.team?.teamName ?? 'Home',
     awayAbbrev: away.team?.abbreviation ?? away.team?.teamCode ?? '',
     homeAbbrev: home.team?.abbreviation ?? home.team?.teamCode ?? '',
+    awayProbablePitcher: away.probablePitcher?.fullName ?? null,
+    homeProbablePitcher: home.probablePitcher?.fullName ?? null,
+    awaySeriesWins: away.leagueRecord?.wins ?? null,
+    homeSeriesWins: home.leagueRecord?.wins ?? null,
     awayScore: away.score ?? 0,
     homeScore: home.score ?? 0,
     inning: linescore.currentInning ?? null,
@@ -95,6 +100,9 @@ export function normalizeGame(game) {
     statusReason: status.reason ?? null,
     codedState: status.codedGameState ?? null,
     startTime: game.gameDate ?? null,
+    seriesDescription: game.seriesDescription ?? null,
+    seriesGameNumber: game.seriesGameNumber ?? null,
+    gamesInSeries: game.gamesInSeries ?? null,
   };
 }
 
@@ -107,7 +115,7 @@ export async function fetchGamesForDate(date, teamId) {
   const url = new URL(`${MLB_BASE}/schedule`);
   url.searchParams.set('sportId', '1');
   url.searchParams.set('date', date);
-  url.searchParams.set('hydrate', 'linescore,team');
+  url.searchParams.set('hydrate', 'linescore,team,probablePitcher');
   if (teamId != null) {
     url.searchParams.set('teamId', String(teamId));
   }

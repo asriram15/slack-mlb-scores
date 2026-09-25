@@ -5,6 +5,7 @@ Slack bot that posts compact MLB score alerts to a channel when runs score or ga
 ## Features
 
 - **Live channel alerts** — posts when the score changes (batter, pitcher, who scored). Multiple runs in one poll interval each get their own post.
+- **Morning schedule** - posts each game day's slate at 9:00 AM Eastern by default, including probable starters and playoff series status.
 - **Finals** — one-line Final alert; walk-offs and game-ending outs when the feed provides them.
 - **Postponements** — shows as Postponed (with reason) instead of a fake Final 0–0.
 - **Hold until complete** — waits for an at-bat to finish before posting (e.g. wild pitch during a walk), so you get one settled alert instead of two half-baked ones.
@@ -71,12 +72,16 @@ Invite the bot to your scores channel; alerts post there automatically while the
 | `PLAY_DETAIL_MAX_RETRIES` | No | Poll cycles to backfill missing play details or incomplete at-bats (default `8`) |
 | `VIDEO_HIGHLIGHT_MAX_RETRIES` | No | Poll cycles to wait for a highlight clip (default `20`) |
 | `GAME_DAY_TZ` | No | Timezone for "today" / "yesterday" date boundaries (default `America/New_York`) |
+| `DAILY_SCHEDULE_ENABLED` | No | Set to `false` to disable the daily schedule post (default `true`) |
+| `DAILY_SCHEDULE_TIME` | No | Schedule post time in `HH:MM`, interpreted in `GAME_DAY_TZ` (default `09:00`) |
+| `DAILY_SCHEDULE_STATE_FILE` | No | File used to prevent duplicate posts after a restart (default `.daily-schedule-state.json`) |
 
 
 ## Project layout
 
 ```
 src/
+  daily-schedule.js # Morning schedule timer and Slack post
   index.js       # Bolt app entry (+ optional /scores)
   mlb.js         # MLB Stats API client
   teams.js       # MLB team IDs + slash-command parsing

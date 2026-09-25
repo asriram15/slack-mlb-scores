@@ -1,3 +1,4 @@
 node_modules/
 .env
+.daily-schedule-state.json
 .DS_Store
