@@ -35,6 +35,9 @@ export async function fetchHighlightItems(gamePk) {
 export function highlightMatchesPlayId(item, playId) {
   if (!item || !playId) return false;
 
+  // Content API joins clips to pitches via top-level guid (same UUID as playEvents[].playId).
+  if (item.guid === playId) return true;
+
   for (const kw of item.keywordsAll ?? []) {
     const type = (kw.type ?? '').toLowerCase();
     if (
@@ -46,7 +49,7 @@ export function highlightMatchesPlayId(item, playId) {
     if (kw.value === playId) return true;
   }
 
-  // MLB often embeds the pitch playId in playback/asset metadata.
+  // Fallback: playId sometimes appears only in playback/asset metadata.
   return JSON.stringify(item).includes(playId);
 }
 

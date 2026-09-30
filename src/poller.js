@@ -360,7 +360,7 @@ async function tryResolvePendingVideos(app) {
           incrementPendingVideoAttempts(entry.channelId, entry.threadTs)
         ) {
           console.log(
-            `[poller] gave up highlight for ${pendingVideoLabel(entry)} after max retries`,
+            `[poller] gave up highlight for ${pendingVideoLabel(entry)} after max wait`,
           );
         }
       }
@@ -377,7 +377,7 @@ async function tryResolvePendingVideos(app) {
           incrementPendingVideoAttempts(entry.channelId, entry.threadTs)
         ) {
           console.log(
-            `[poller] gave up highlight for ${label} after max retries`,
+            `[poller] gave up highlight for ${label} after max wait`,
           );
         }
         continue;
@@ -406,7 +406,7 @@ async function tryResolvePendingVideos(app) {
           incrementPendingVideoAttempts(entry.channelId, entry.threadTs)
         ) {
           console.log(
-            `[poller] gave up highlight for ${label} after max retries`,
+            `[poller] gave up highlight for ${label} after max wait`,
           );
         }
       }

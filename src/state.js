@@ -44,6 +44,7 @@ const pendingIncompleteAtBats = new Map();
  * @property {number} gamePk
  * @property {string} playId
  * @property {string|null} [playLabel] - human-readable play context for logs
+ * @property {number} queuedAt - Date.now() when the score alert was posted
  * @property {number} attempts
  */
 
@@ -53,9 +54,22 @@ const pendingVideos = new Map();
 const MAX_PENDING_ATTEMPTS = () =>
   Number(process.env.PLAY_DETAIL_MAX_RETRIES ?? 8);
 
-/** Highlight clips often lag the live feed by several minutes. */
-const MAX_VIDEO_ATTEMPTS = () =>
-  Number(process.env.VIDEO_HIGHLIGHT_MAX_RETRIES ?? 20);
+/**
+ * Wall-clock wait for MLB to publish a clip. Clips often land in 2–5 minutes,
+ * but some in-game highlights lag 45–60+ minutes — poll-count limits expire too early.
+ */
+const MAX_VIDEO_WAIT_MS = () => {
+  if (process.env.VIDEO_HIGHLIGHT_MAX_WAIT_MS != null) {
+    return Number(process.env.VIDEO_HIGHLIGHT_MAX_WAIT_MS);
+  }
+  // Legacy: approximate wait from poll retries × active poll interval.
+  if (process.env.VIDEO_HIGHLIGHT_MAX_RETRIES != null) {
+    const retries = Number(process.env.VIDEO_HIGHLIGHT_MAX_RETRIES);
+    const interval = Number(process.env.POLL_INTERVAL_MS ?? 120_000);
+    return retries * interval;
+  }
+  return 2 * 60 * 60 * 1000; // 2 hours
+};
 
 /**
  * @param {string} channelId
@@ -230,6 +244,7 @@ export function markPendingVideo(channelId, threadTs, gamePk, playId, playLabel 
     gamePk,
     playId,
     playLabel: playLabel || null,
+    queuedAt: Date.now(),
     attempts: 0,
   });
 }
@@ -266,16 +281,19 @@ export function hasPendingVideos() {
 }
 
 /**
+ * Record a missed highlight resolve. Returns true if the wall-clock wait
+ * expired and the pending entry was cleared.
  * @param {string} channelId
  * @param {string} threadTs
- * @returns {boolean} true if exceeded max retries and was cleared
+ * @returns {boolean}
  */
 export function incrementPendingVideoAttempts(channelId, threadTs) {
   const key = videoKey(channelId, threadTs);
   const pending = pendingVideos.get(key);
   if (!pending) return false;
   pending.attempts += 1;
-  if (pending.attempts >= MAX_VIDEO_ATTEMPTS()) {
+  const queuedAt = pending.queuedAt ?? Date.now();
+  if (Date.now() - queuedAt >= MAX_VIDEO_WAIT_MS()) {
     pendingVideos.delete(key);
     return true;
   }

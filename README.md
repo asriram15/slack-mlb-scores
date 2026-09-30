@@ -5,7 +5,7 @@ Slack bot that posts compact MLB score alerts to a channel when runs score or ga
 ## Features
 
 - **Live channel alerts** — posts when the score changes (batter, pitcher, who scored). Multiple runs in one poll interval each get their own post.
-- **Morning schedule** - posts each game day's slate at 9:00 AM Eastern by default, including probable starters and playoff series status.
+- **Morning schedule** — posts each game day's slate at 9:00 AM Eastern by default, including probable starters and playoff series status.
 - **Finals** — one-line Final alert; walk-offs and game-ending outs when the feed provides them.
 - **Postponements** — shows as Postponed (with reason) instead of a fake Final 0–0.
 - **Hold until complete** — waits for an at-bat to finish before posting (e.g. wild pitch during a walk), so you get one settled alert instead of two half-baked ones.
@@ -70,7 +70,8 @@ Invite the bot to your scores channel; alerts post there automatically while the
 | `LIVE_FEED_RETRIES` | No | Retries when loading play-by-play after a score change (default `4`) |
 | `LIVE_FEED_RETRY_MS` | No | Delay between live feed retries in ms (default `800`) |
 | `PLAY_DETAIL_MAX_RETRIES` | No | Poll cycles to backfill missing play details or incomplete at-bats (default `8`) |
-| `VIDEO_HIGHLIGHT_MAX_RETRIES` | No | Poll cycles to wait for a highlight clip (default `20`) |
+| `VIDEO_HIGHLIGHT_MAX_WAIT_MS` | No | Wall-clock ms to wait for a highlight clip after the score alert (default `7200000` = 2 hours). Some clips lag 45–60+ minutes. |
+| `VIDEO_HIGHLIGHT_MAX_RETRIES` | No | Legacy: if set (and `VIDEO_HIGHLIGHT_MAX_WAIT_MS` is not), wait ≈ retries × `POLL_INTERVAL_MS`. |
 | `GAME_DAY_TZ` | No | Timezone for "today" / "yesterday" date boundaries (default `America/New_York`) |
 | `DAILY_SCHEDULE_ENABLED` | No | Set to `false` to disable the daily schedule post (default `true`) |
 | `DAILY_SCHEDULE_TIME` | No | Schedule post time in `HH:MM`, interpreted in `GAME_DAY_TZ` (default `09:00`) |
@@ -96,5 +97,5 @@ src/
 
 - MLB Stats API is unofficial and may change without notice.
 - In-memory state resets on restart; the bot will not re-post current scores until the next change.
-- Highlight clips often lag the live feed by several minutes; the bot retries in-thread when they appear.
+- Highlight clips often lag the live feed by a few minutes (sometimes 45–60+); the bot retries in-thread until the clip appears or the wait expires. MLB does not publish a clip for every scoring play (e.g. many fielding errors).
 - Final alerts include the **last scoring play** (walk-off) or the **game-ending out** (groundout, strikeout, etc.) when the game ends without a run on that play.
