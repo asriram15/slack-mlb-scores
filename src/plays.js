@@ -9,11 +9,54 @@
  */
 
 /**
+ * Mid-PA or at-bat scoring moment (wild pitch, passed ball, hit, etc.).
+ * @typedef {object} ScoringMoment
+ * @property {object} play
+ * @property {number} atBatIndex
+ * @property {number} playIndex
+ * @property {boolean} isActionScoring
+ * @property {string} event
+ * @property {string} eventType
+ * @property {string[]} scorers
+ * @property {string} [description]
+ * @property {number|null} awayScore
+ * @property {number|null} homeScore
+ * @property {string} batter
+ * @property {string} pitcher
+ * @property {number} rbi
+ */
+
+/**
  * @typedef {object} PlayAlertContext
  * @property {string} text
  * @property {'scoring'|'ending'|'walkoff'} kind
  * @property {number} atBatIndex
+ * @property {number} [playIndex]
  */
+
+/** Runner/action event types that score without the batter's plate-appearance result. */
+const NON_BATTER_SCORING_TYPES = new Set([
+  'wild_pitch',
+  'passed_ball',
+  'balk',
+  'stolen_base',
+  'stolen_base_home',
+  'other_advance',
+  'defensive_indiff',
+  'error',
+  'pickoff_error_1b',
+  'pickoff_error_2b',
+  'pickoff_error_3b',
+  'runner_interference',
+]);
+
+/**
+ * @param {string} [eventType]
+ * @returns {boolean}
+ */
+export function isNonBatterScoringEventType(eventType) {
+  return Boolean(eventType && NON_BATTER_SCORING_TYPES.has(eventType));
+}
 
 /**
  * @param {import('./format.js').GameSummary} game
@@ -65,6 +108,156 @@ export function isPlayComplete(play) {
 }
 
 /**
+ * Split an at-bat into scoring moments (e.g. wild pitch mid-PA, then a hit).
+ * @param {object} play
+ * @returns {ScoringMoment[]}
+ */
+export function extractScoringMoments(play) {
+  if (!play || !isScoringPlay(play)) return [];
+
+  /** @type {Map<number, object[]>} */
+  const runnersByIndex = new Map();
+  for (const r of play.runners ?? []) {
+    if (!r.details?.isScoringEvent) continue;
+    const idx = r.details.playIndex;
+    if (typeof idx !== 'number') continue;
+    if (!runnersByIndex.has(idx)) runnersByIndex.set(idx, []);
+    runnersByIndex.get(idx).push(r);
+  }
+
+  for (const e of play.playEvents ?? []) {
+    if (
+      e.details?.isScoringPlay &&
+      typeof e.index === 'number' &&
+      !runnersByIndex.has(e.index)
+    ) {
+      runnersByIndex.set(e.index, []);
+    }
+  }
+
+  const batter = play.matchup?.batter?.fullName ?? 'Unknown batter';
+  const pitcher = play.matchup?.pitcher?.fullName ?? 'Unknown pitcher';
+  const atBatIndex = play.about?.atBatIndex ?? -1;
+
+  /** @type {ScoringMoment[]} */
+  const moments = [];
+
+  for (const playIndex of [...runnersByIndex.keys()].sort((a, b) => a - b)) {
+    const runners = runnersByIndex.get(playIndex) ?? [];
+    const playEvent =
+      (play.playEvents ?? []).find((e) => e.index === playIndex) ??
+      play.playEvents?.[playIndex];
+
+    const eventType =
+      playEvent?.details?.eventType ??
+      runners[0]?.details?.eventType ??
+      play.result?.eventType ??
+      '';
+    const event =
+      playEvent?.details?.event ??
+      runners[0]?.details?.event ??
+      play.result?.event ??
+      eventType ??
+      'play';
+
+    const isActionScoring =
+      (playEvent?.type === 'action' &&
+        (playEvent?.details?.isScoringPlay ||
+          isNonBatterScoringEventType(eventType))) ||
+      isNonBatterScoringEventType(eventType);
+
+    const scorers = [
+      ...new Set(
+        runners
+          .map((r) => r.details?.runner?.fullName)
+          .filter(Boolean),
+      ),
+    ];
+
+    let awayScore = playEvent?.details?.awayScore ?? null;
+    let homeScore = playEvent?.details?.homeScore ?? null;
+    if (typeof awayScore !== 'number' || typeof homeScore !== 'number') {
+      awayScore = play.result?.awayScore ?? null;
+      homeScore = play.result?.homeScore ?? null;
+    }
+
+    moments.push({
+      play,
+      atBatIndex,
+      playIndex,
+      isActionScoring,
+      event: event || 'play',
+      eventType: eventType || '',
+      scorers,
+      description: isActionScoring
+        ? playEvent?.details?.description
+        : play.result?.description,
+      awayScore,
+      homeScore,
+      batter,
+      pitcher,
+      rbi: isActionScoring ? 0 : (play.result?.rbi ?? 0),
+    });
+  }
+
+  if (moments.length === 0) {
+    const context = parseScoringPlay(play);
+    if (!context) return [];
+    moments.push({
+      play,
+      atBatIndex,
+      playIndex: -1,
+      isActionScoring: false,
+      event: context.event,
+      eventType: play.result?.eventType ?? '',
+      scorers: context.scorers,
+      description: context.description,
+      awayScore: play.result?.awayScore ?? null,
+      homeScore: play.result?.homeScore ?? null,
+      batter: context.batter,
+      pitcher: context.pitcher,
+      rbi: context.rbi ?? 0,
+    });
+  }
+
+  return moments;
+}
+
+/**
+ * @param {ScoringMoment} moment
+ * @param {number} sinceAtBat
+ * @param {number} sinceEvent
+ * @returns {boolean}
+ */
+function isMomentAfterCursor(moment, sinceAtBat, sinceEvent) {
+  if (moment.atBatIndex > sinceAtBat) return true;
+  if (moment.atBatIndex < sinceAtBat) return false;
+  return moment.playIndex > sinceEvent;
+}
+
+/**
+ * @param {ScoringMoment} moment
+ * @param {number|null} prevAway
+ * @param {number|null} prevHome
+ * @param {number} currAway
+ * @param {number} currHome
+ * @returns {boolean}
+ */
+function momentScoreInGap(moment, prevAway, prevHome, currAway, currHome) {
+  const a = moment.awayScore;
+  const h = moment.homeScore;
+  if (typeof a !== 'number' || typeof h !== 'number') return true;
+
+  if (typeof prevAway === 'number' && typeof prevHome === 'number') {
+    if (a < prevAway || h < prevHome) return false;
+    if (a === prevAway && h === prevHome) return false;
+  }
+
+  if (a > currAway || h > currHome) return false;
+  return true;
+}
+
+/**
  * Find the scoring play that produced the current scoreboard line.
  * @param {object[]} allPlays
  * @param {number} awayScore
@@ -78,21 +271,71 @@ export function findScoringPlayForScore(
   homeScore,
   sinceIndex,
 ) {
-  const plays = findScoringPlaysInGap(
+  const moments = findScoringMomentsInGap(
     allPlays,
     sinceIndex,
+    -1,
     null,
     null,
     awayScore,
     homeScore,
   );
-  return plays.at(-1) ?? null;
+  return moments.at(-1)?.play ?? null;
 }
 
 /**
- * All scoring plays between the last seen at-bat and the current scoreboard.
- * Used so multiple runs in one poll interval each get their own alert.
+ * Scoring moments between the last seen cursor and the current scoreboard.
+ * Mid-PA actions (wild pitch, etc.) are separate from the at-bat result.
  *
+ * @param {object[]} allPlays
+ * @param {number} sinceAtBat
+ * @param {number} sinceEvent
+ * @param {number|null} prevAway
+ * @param {number|null} prevHome
+ * @param {number} currAway
+ * @param {number} currHome
+ * @returns {ScoringMoment[]}
+ */
+export function findScoringMomentsInGap(
+  allPlays,
+  sinceAtBat,
+  sinceEvent,
+  prevAway,
+  prevHome,
+  currAway,
+  currHome,
+) {
+  const recent = allPlays
+    .filter(isScoringPlay)
+    .flatMap((p) => extractScoringMoments(p))
+    .filter((m) => isMomentAfterCursor(m, sinceAtBat, sinceEvent))
+    .sort(
+      (a, b) =>
+        a.atBatIndex - b.atBatIndex || a.playIndex - b.playIndex,
+    );
+
+  const inGap = recent.filter((m) =>
+    momentScoreInGap(m, prevAway, prevHome, currAway, currHome),
+  );
+  if (inGap.length) return inGap;
+
+  const exact = recent.filter(
+    (m) => m.awayScore === currAway && m.homeScore === currHome,
+  );
+  if (exact.length) return [exact.at(-1)];
+
+  if (recent.length) return [recent.at(-1)];
+
+  const fallback = allPlays
+    .filter(isScoringPlay)
+    .flatMap((p) => extractScoringMoments(p))
+    .filter((m) => m.awayScore === currAway && m.homeScore === currHome);
+  const last = fallback.at(-1);
+  return last ? [last] : [];
+}
+
+/**
+ * All scoring at-bats between the last seen at-bat and the current scoreboard.
  * @param {object[]} allPlays
  * @param {number} sinceIndex
  * @param {number|null} prevAway
@@ -109,47 +352,24 @@ export function findScoringPlaysInGap(
   currAway,
   currHome,
 ) {
-  const recent = allPlays
-    .filter((p) => {
-      const idx = p.about?.atBatIndex ?? -1;
-      return idx > sinceIndex && isScoringPlay(p);
-    })
-    .sort(
-      (a, b) => (a.about?.atBatIndex ?? 0) - (b.about?.atBatIndex ?? 0),
-    );
-
-  const inGap = recent.filter((p) => {
-    const a = p.result?.awayScore;
-    const h = p.result?.homeScore;
-    if (typeof a !== 'number' || typeof h !== 'number') return true;
-
-    if (typeof prevAway === 'number' && typeof prevHome === 'number') {
-      if (a < prevAway || h < prevHome) return false;
-      if (a === prevAway && h === prevHome) return false;
-    }
-
-    if (a > currAway || h > currHome) return false;
-    return true;
-  });
-
-  if (inGap.length) return inGap;
-
-  const exact = recent.filter(
-    (p) =>
-      p.result?.awayScore === currAway && p.result?.homeScore === currHome,
+  const moments = findScoringMomentsInGap(
+    allPlays,
+    sinceIndex,
+    -1,
+    prevAway,
+    prevHome,
+    currAway,
+    currHome,
   );
-  if (exact.length) return [exact.at(-1)];
-
-  if (recent.length) return [recent.at(-1)];
-
-  const fallback = allPlays.filter(
-    (p) =>
-      isScoringPlay(p) &&
-      p.result?.awayScore === currAway &&
-      p.result?.homeScore === currHome,
-  );
-  const last = fallback.at(-1);
-  return last ? [last] : [];
+  const seen = new Set();
+  /** @type {object[]} */
+  const plays = [];
+  for (const m of moments) {
+    if (seen.has(m.atBatIndex)) continue;
+    seen.add(m.atBatIndex);
+    plays.push(m.play);
+  }
+  return plays;
 }
 
 /**
@@ -182,9 +402,7 @@ export function lastPlayInGame(allPlays) {
  */
 export function scoringPlaysSince(allPlays, minAtBatIndex) {
   return allPlays.filter(
-    (p) =>
-      (p.about?.atBatIndex ?? -1) > minAtBatIndex &&
-      (p.about?.isScoringPlay || (p.result?.rbi ?? 0) > 0),
+    (p) => (p.about?.atBatIndex ?? -1) > minAtBatIndex && isScoringPlay(p),
   );
 }
 
@@ -200,10 +418,12 @@ export function parseScoringPlay(play) {
   const event = play.result?.event ?? play.result?.eventType;
   const description = play.result?.description;
 
+  // Exclude mid-PA action scorers (wild pitch, etc.); those are separate moments.
   const scorers = [
     ...new Set(
       (play.runners ?? [])
         .filter((r) => r.details?.isScoringEvent)
+        .filter((r) => !isNonBatterScoringEventType(r.details?.eventType))
         .map((r) => r.details?.runner?.fullName)
         .filter(Boolean),
     ),
@@ -245,6 +465,26 @@ function homeRunEventLabel(rbi, scorerCount) {
 }
 
 /**
+ * @param {string[]} scorers
+ * @param {number} [rbi]
+ * @param {string} [description]
+ * @param {string} [batter]
+ * @returns {string}
+ */
+function formatRunLine(scorers, rbi = 0, description, batter) {
+  if (scorers.length === 1) {
+    return scorers[0] === batter ? 'scores' : `${scorers[0]} scores`;
+  }
+  if (scorers.length > 1) return `${scorers.join(', ')} score`;
+  if (rbi > 0) return `${rbi} RBI`;
+  if (description) {
+    const scorePart = description.split('.').find((s) => /scores?/i.test(s));
+    return scorePart?.trim() ?? description;
+  }
+  return 'Run scored';
+}
+
+/**
  * @param {ScoringPlayContext} ctx
  * @returns {string}
  */
@@ -263,26 +503,38 @@ export function formatScoringContext(ctx) {
   }
 
   const hitLine = `${ctx.batter} (${ctx.event}) off ${ctx.pitcher}`;
+  return `${hitLine} · ${formatRunLine(
+    ctx.scorers,
+    ctx.rbi,
+    ctx.description,
+    ctx.batter,
+  )}`;
+}
 
-  let runLine;
-  if (ctx.scorers.length === 1) {
-    // Sole scorer is usually a runner, not the batter (non-HR).
-    runLine =
-      ctx.scorers[0] === ctx.batter
-        ? 'scores'
-        : `${ctx.scorers[0]} scores`;
-  } else if (ctx.scorers.length > 1) {
-    runLine = `${ctx.scorers.join(', ')} score`;
-  } else if (ctx.rbi > 0) {
-    runLine = `${ctx.rbi} RBI`;
-  } else if (ctx.description) {
-    const scorePart = ctx.description.split('.').find((s) => /scores?/i.test(s));
-    runLine = scorePart?.trim() ?? ctx.description;
-  } else {
-    runLine = 'Run scored';
+/**
+ * @param {ScoringMoment} moment
+ * @returns {string}
+ */
+export function formatScoringMoment(moment) {
+  if (moment.isActionScoring) {
+    if (moment.description) {
+      return moment.description
+        .replace(/\bby pitcher\b/gi, 'by')
+        .replace(/\.\s*$/, '')
+        .replace(/\.\s+/g, ' · ');
+    }
+    const label = moment.event || 'Play';
+    return `${label} by ${moment.pitcher} · ${formatRunLine(moment.scorers)}`;
   }
 
-  return `${hitLine} · ${runLine}`;
+  return formatScoringContext({
+    batter: moment.batter,
+    pitcher: moment.pitcher,
+    event: moment.event,
+    scorers: moment.scorers,
+    description: moment.description,
+    rbi: moment.rbi,
+  });
 }
 
 /**
@@ -340,6 +592,7 @@ export function formatEndingPlayContext(play) {
  * @property {string} text
  * @property {'scoring'|'ending'|'walkoff'} kind
  * @property {number} atBatIndex
+ * @property {number} playIndex
  * @property {number} awayScore
  * @property {number} homeScore
  * @property {number|null} [inning]
@@ -350,11 +603,17 @@ export function formatEndingPlayContext(play) {
 /**
  * UUID on the decisive pitch/event — used to join MLB highlight clips.
  * @param {object} [play]
+ * @param {number} [playIndex]
  * @returns {string|null}
  */
-export function extractPlayId(play) {
+export function extractPlayId(play, playIndex) {
   const events = play?.playEvents;
   if (!Array.isArray(events) || events.length === 0) return null;
+  if (typeof playIndex === 'number' && playIndex >= 0) {
+    const event = events.find((item) => item?.index === playIndex);
+    const id = event?.playId;
+    if (typeof id === 'string' && id.length > 0) return id;
+  }
   for (let i = events.length - 1; i >= 0; i--) {
     const id = events[i]?.playId;
     if (typeof id === 'string' && id.length > 0) return id;
@@ -363,12 +622,13 @@ export function extractPlayId(play) {
 }
 
 /**
- * Build one alert per scoring play in the poll gap (plus ending context on final).
+ * Build one alert per scoring moment in the poll gap (plus ending context on final).
  * @param {object[]} allPlays
  * @param {{
  *   scoreChanged: boolean,
  *   isFinalTransition: boolean,
  *   sinceIndex: number,
+ *   sinceEventIndex?: number,
  *   game: import('./format.js').GameSummary,
  *   prevAwayScore?: number,
  *   prevHomeScore?: number,
@@ -381,6 +641,7 @@ export function buildPlayAlertContexts(
     scoreChanged,
     isFinalTransition,
     sinceIndex,
+    sinceEventIndex = -1,
     game,
     prevAwayScore,
     prevHomeScore,
@@ -390,46 +651,45 @@ export function buildPlayAlertContexts(
   const alerts = [];
 
   if (scoreChanged) {
-    const plays = findScoringPlaysInGap(
+    const moments = findScoringMomentsInGap(
       allPlays,
       sinceIndex,
+      sinceEventIndex,
       prevAwayScore ?? null,
       prevHomeScore ?? null,
       game.awayScore,
       game.homeScore,
     );
 
-    for (const play of plays) {
-      const latest = scoringPlayToAlert(play);
-      if (!latest) continue;
-
+    for (const moment of moments) {
       const awayScore =
-        typeof play.result?.awayScore === 'number'
-          ? play.result.awayScore
+        typeof moment.awayScore === 'number'
+          ? moment.awayScore
           : game.awayScore;
       const homeScore =
-        typeof play.result?.homeScore === 'number'
-          ? play.result.homeScore
+        typeof moment.homeScore === 'number'
+          ? moment.homeScore
           : game.homeScore;
 
       let kind = 'scoring';
       if (
         isFinalTransition &&
-        play === plays.at(-1) &&
-        isWalkOffPlay(play, { ...game, awayScore, homeScore })
+        moment === moments.at(-1) &&
+        isWalkOffPlay(moment.play, { ...game, awayScore, homeScore })
       ) {
         kind = 'walkoff';
       }
 
       alerts.push({
-        text: formatScoringContext(latest.context),
+        text: formatScoringMoment(moment),
         kind,
-        atBatIndex: latest.atBatIndex,
+        atBatIndex: moment.atBatIndex,
+        playIndex: moment.playIndex,
         awayScore,
         homeScore,
-        inning: play.about?.inning ?? null,
-        inningHalf: halfInningLabel(play),
-        playId: extractPlayId(play),
+        inning: moment.play.about?.inning ?? null,
+        inningHalf: halfInningLabel(moment.play),
+        playId: extractPlayId(moment.play, moment.playIndex),
       });
     }
   }
@@ -442,18 +702,18 @@ export function buildPlayAlertContexts(
 
     const lastPlay = lastPlayInGame(allPlays);
     if (lastPlay && isWalkOffPlay(lastPlay, game)) {
-      const ctx = parseScoringPlay(lastPlay);
-      if (ctx) {
-        // Replace trailing scoring alert for the same at-bat, or append.
+      const walkoffMoment = extractScoringMoments(lastPlay).at(-1);
+      if (walkoffMoment) {
         const walkoff = {
-          text: formatScoringContext(ctx),
+          text: formatScoringMoment(walkoffMoment),
           kind: /** @type {const} */ ('walkoff'),
           atBatIndex: lastPlay.about?.atBatIndex ?? -1,
+          playIndex: walkoffMoment.playIndex,
           awayScore: game.awayScore,
           homeScore: game.homeScore,
           inning: lastPlay.about?.inning ?? game.inning,
           inningHalf: halfInningLabel(lastPlay) ?? game.inningHalf,
-          playId: extractPlayId(lastPlay),
+          playId: extractPlayId(lastPlay, walkoffMoment.playIndex),
         };
         if (lastAlert && lastAlert.atBatIndex === walkoff.atBatIndex) {
           alerts[alerts.length - 1] = walkoff;
@@ -478,6 +738,7 @@ export function buildPlayAlertContexts(
           text: ending,
           kind: 'ending',
           atBatIndex: lastPlay?.about?.atBatIndex ?? -1,
+          playIndex: -1,
           awayScore: game.awayScore,
           homeScore: game.homeScore,
           inning: lastPlay?.about?.inning ?? game.inning,
@@ -500,6 +761,7 @@ export function buildPlayAlertContexts(
  *   scoreChanged: boolean,
  *   isFinalTransition: boolean,
  *   sinceIndex: number,
+ *   sinceEventIndex?: number,
  *   game: import('./format.js').GameSummary,
  *   prevAwayScore?: number,
  *   prevHomeScore?: number,
@@ -514,6 +776,7 @@ export function buildPlayAlertContext(allPlays, opts) {
     text: last.text,
     kind: last.kind,
     atBatIndex: last.atBatIndex,
+    playIndex: last.playIndex,
   };
 }
 

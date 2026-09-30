@@ -3,7 +3,8 @@ import { gameFingerprint } from './format.js';
 /**
  * @typedef {object} GameStateEntry
  * @property {string} fp
- * @property {number} lastPlayIndex
+ * @property {number} lastPlayIndex - last seen at-bat index
+ * @property {number} lastEventIndex - last seen playEvent index within that at-bat
  */
 
 /** @type {Map<number, GameStateEntry>} */
@@ -21,6 +22,11 @@ const gameState = new Map();
 
 /** @type {Map<number, PendingPlayDetails>} */
 const pendingPlayDetails = new Map();
+
+/** @returns {GameStateEntry} */
+function newEntry(fp) {
+  return { fp, lastPlayIndex: -1, lastEventIndex: -1 };
+}
 
 /**
  * Score changed on an at-bat that is still open (WP during PA, etc.).
@@ -115,7 +121,7 @@ export function detectChange(game) {
   const entry = gameState.get(game.gamePk);
 
   if (entry === undefined) {
-    gameState.set(game.gamePk, { fp, lastPlayIndex: -1 });
+    gameState.set(game.gamePk, newEntry(fp));
     return null;
   }
 
@@ -124,7 +130,11 @@ export function detectChange(game) {
   }
 
   const prev = parseFingerprint(entry.fp);
-  gameState.set(game.gamePk, { fp, lastPlayIndex: entry.lastPlayIndex });
+  gameState.set(game.gamePk, {
+    fp,
+    lastPlayIndex: entry.lastPlayIndex,
+    lastEventIndex: entry.lastEventIndex ?? -1,
+  });
 
   return {
     game,
@@ -146,13 +156,36 @@ export function getLastPlayIndex(gamePk) {
 
 /**
  * @param {number} gamePk
- * @param {number} atBatIndex
+ * @returns {{ atBatIndex: number, eventIndex: number }}
  */
-export function setLastPlayIndex(gamePk, atBatIndex) {
+export function getLastPlayCursor(gamePk) {
+  const entry = gameState.get(gamePk);
+  return {
+    atBatIndex: entry?.lastPlayIndex ?? -1,
+    eventIndex: entry?.lastEventIndex ?? -1,
+  };
+}
+
+/**
+ * @param {number} gamePk
+ * @param {number} atBatIndex
+ * @param {number} [eventIndex]
+ */
+export function setLastPlayIndex(gamePk, atBatIndex, eventIndex = -1) {
   const entry = gameState.get(gamePk);
   if (entry) {
     entry.lastPlayIndex = atBatIndex;
+    entry.lastEventIndex = eventIndex;
   }
+}
+
+/**
+ * @param {number} gamePk
+ * @param {number} atBatIndex
+ * @param {number} [eventIndex]
+ */
+export function setLastPlayCursor(gamePk, atBatIndex, eventIndex = -1) {
+  setLastPlayIndex(gamePk, atBatIndex, eventIndex);
 }
 
 /**
@@ -163,6 +196,7 @@ export function advanceLastPlayIndex(gamePk, atBatIndex) {
   const entry = gameState.get(gamePk);
   if (entry && atBatIndex > entry.lastPlayIndex) {
     entry.lastPlayIndex = atBatIndex;
+    entry.lastEventIndex = -1;
   }
 }
 

@@ -2,8 +2,8 @@ import { fetchGamesForPolling, fetchLiveFeedWithRetry } from './mlb.js';
 import { formatChangeAlert, isNonResultFinal } from './format.js';
 import {
   detectChange,
-  getLastPlayIndex,
-  setLastPlayIndex,
+  getLastPlayCursor,
+  setLastPlayCursor,
   advanceLastPlayIndex,
   markPendingPlayDetails,
   clearPendingPlayDetails,
@@ -77,12 +77,12 @@ async function fetchPlayContextsForAlert(
 ) {
   const feed = await fetchLiveFeedWithRetry(gamePk);
   const allPlays = feed.liveData?.plays?.allPlays ?? [];
-  const sinceIndex = getLastPlayIndex(gamePk);
+  const cursor = getLastPlayCursor(gamePk);
 
   if (scoreChanged && !isFinalTransition && !forceIncomplete) {
     const plays = findScoringPlaysInGap(
       allPlays,
-      sinceIndex,
+      cursor.atBatIndex,
       prevAwayScore ?? null,
       prevHomeScore ?? null,
       game.awayScore,
@@ -96,15 +96,21 @@ async function fetchPlayContextsForAlert(
   const alerts = buildPlayAlertContexts(allPlays, {
     scoreChanged,
     isFinalTransition,
-    sinceIndex,
+    sinceIndex: cursor.atBatIndex,
+    sinceEventIndex: cursor.eventIndex,
     game,
     prevAwayScore,
     prevHomeScore,
   });
 
   if (alerts.length) {
-    const lastIdx = Math.max(...alerts.map((a) => a.atBatIndex));
-    setLastPlayIndex(gamePk, lastIdx);
+    const last = alerts.reduce((a, b) =>
+      b.atBatIndex > a.atBatIndex ||
+      (b.atBatIndex === a.atBatIndex && b.playIndex > a.playIndex)
+        ? b
+        : a,
+    );
+    setLastPlayCursor(gamePk, last.atBatIndex, last.playIndex);
     advanceLastPlayIndex(gamePk, maxAtBatIndex(allPlays));
   }
 
