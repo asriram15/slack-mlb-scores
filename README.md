@@ -5,7 +5,8 @@ Slack bot that posts compact MLB score alerts to a channel when runs score or ga
 ## Features
 
 - **Live channel alerts** — posts when the score changes (batter, pitcher, who scored). Multiple runs in one poll interval each get their own post.
-- **Morning schedule** — posts each game day's slate at 9:00 AM Eastern by default, including probable starters and playoff series status.
+- **Morning schedule** — posts each game day's slate at 9:00 AM Eastern by default, including probable starters, playoff series status, and national TV channels.
+- **National TV listings** — shows national broadcast channels in the morning schedule and `/scores` board when MLB provides them.
 - **Finals** — one-line Final alert; walk-offs and game-ending outs when the feed provides them.
 - **Postponements** — shows as Postponed (with reason) instead of a fake Final 0–0.
 - **Hold until complete** — waits for an at-bat to finish before posting (e.g. wild pitch during a walk), so you get one settled alert instead of two half-baked ones.

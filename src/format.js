@@ -25,6 +25,7 @@
  * @property {string|null} seriesDescription
  * @property {number|null} seriesGameNumber
  * @property {number|null} gamesInSeries
+ * @property {string[]} nationalTvChannels
  */
 
 /**
@@ -90,6 +91,15 @@ function homeLabel(g) {
  * @param {GameSummary} g
  * @returns {string}
  */
+export function formatNationalTv(g) {
+  if (!g.nationalTvChannels?.length) return '';
+  return `National TV: ${g.nationalTvChannels.join(', ')}`;
+}
+
+/**
+ * @param {GameSummary} g
+ * @returns {string}
+ */
 export function formatSeriesRecord(g) {
   if (
     !['F', 'D', 'L', 'W'].includes(g.gameType ?? '') ||
@@ -143,6 +153,9 @@ export function formatDailyScheduleGame(g) {
       `${g.seriesDescription}${gameNumber}${seriesRecord ? ` · ${seriesRecord}` : ''}`,
     );
   }
+
+  const nationalTv = formatNationalTv(g);
+  if (nationalTv) lines.push(nationalTv);
 
   return lines.join('\n');
 }
@@ -223,6 +236,8 @@ export function formatInningText(g, { includeOuts = true } = {}) {
 export function formatGameMrkdwn(g) {
   const away = awayLabel(g);
   const home = homeLabel(g);
+  const nationalTv = formatNationalTv(g);
+  const tvSuffix = nationalTv ? ` · ${nationalTv}` : '';
 
   if (g.abstractState === 'Preview') {
     const time = g.startTime
@@ -232,24 +247,24 @@ export function formatGameMrkdwn(g) {
           timeZone: TZ(),
         })
       : 'TBD';
-    return `*${away}* @ *${home}* · ${time}`;
+    return `*${away}* @ *${home}* · ${time}${tvSuffix}`;
   }
 
   if (isNonResultFinal(g)) {
-    return `*${away}* @ *${home}* · *${formatNonResultStatus(g)}*`;
+    return `*${away}* @ *${home}* · *${formatNonResultStatus(g)}*${tvSuffix}`;
   }
 
   const score = `*${away}* ${g.awayScore} – *${home}* ${g.homeScore}`;
 
   if (g.abstractState === 'Live') {
-    return `${score} · ${formatInningText(g)}`;
+    return `${score} · ${formatInningText(g)}${tvSuffix}`;
   }
 
   if (g.abstractState === 'Final') {
-    return `${score} · *Final*`;
+    return `${score} · *Final*${tvSuffix}`;
   }
 
-  return `${score} · ${g.detailedState}`;
+  return `${score} · ${g.detailedState}${tvSuffix}`;
 }
 
 /**

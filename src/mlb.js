@@ -76,6 +76,19 @@ export function normalizeGame(game) {
   const home = game.teams?.home ?? {};
   const linescore = game.linescore ?? {};
   const status = game.status ?? {};
+  const nationalTvChannels = [
+    ...new Set(
+      (game.broadcasts ?? [])
+        .filter(
+          (broadcast) =>
+            broadcast.type === 'TV' &&
+            (broadcast.isNational === true ||
+              broadcast.availability?.availabilityCode === 'national'),
+        )
+        .map((broadcast) => broadcast.name?.trim())
+        .filter(Boolean),
+    ),
+  ];
 
   return {
     gamePk: game.gamePk,
@@ -103,6 +116,7 @@ export function normalizeGame(game) {
     seriesDescription: game.seriesDescription ?? null,
     seriesGameNumber: game.seriesGameNumber ?? null,
     gamesInSeries: game.gamesInSeries ?? null,
+    nationalTvChannels,
   };
 }
 
@@ -115,7 +129,10 @@ export async function fetchGamesForDate(date, teamId) {
   const url = new URL(`${MLB_BASE}/schedule`);
   url.searchParams.set('sportId', '1');
   url.searchParams.set('date', date);
-  url.searchParams.set('hydrate', 'linescore,team,probablePitcher');
+  url.searchParams.set(
+    'hydrate',
+    'linescore,team,probablePitcher,broadcasts',
+  );
   if (teamId != null) {
     url.searchParams.set('teamId', String(teamId));
   }

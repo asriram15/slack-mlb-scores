@@ -7,6 +7,7 @@ import {
 import {
   buildDailyScheduleBlocks,
   formatDailyScheduleGame,
+  formatGameMrkdwn,
   formatSeriesRecord,
 } from '../src/format.js';
 import { normalizeGame } from '../src/mlb.js';
@@ -98,4 +99,36 @@ test('regular season records are not presented as series records', () => {
     seriesDescription: 'Regular Season',
   };
   assert.equal(formatSeriesRecord(game), '');
+});
+
+test('national TV channels are normalized, deduplicated, and displayed', () => {
+  process.env.GAME_DAY_TZ = 'America/New_York';
+  const game = normalizeGame({
+    gamePk: 813027,
+    gameType: 'R',
+    gameDate: '2025-10-24T20:00:00Z',
+    broadcasts: [
+      { name: 'FOX', type: 'TV', isNational: true, homeAway: 'away' },
+      { name: 'FOX', type: 'TV', isNational: true, homeAway: 'home' },
+      { name: 'SportsNet Local', type: 'TV', isNational: false },
+      { name: 'ESPN Radio', type: 'AM', isNational: true },
+      {
+        name: 'TBS',
+        type: 'TV',
+        availability: { availabilityCode: 'national' },
+      },
+    ],
+    teams: {
+      away: { team: { name: 'New York Yankees', abbreviation: 'NYY' } },
+      home: { team: { name: 'Boston Red Sox', abbreviation: 'BOS' } },
+    },
+    status: {
+      abstractGameState: 'Preview',
+      detailedState: 'Scheduled',
+    },
+  });
+
+  assert.deepEqual(game.nationalTvChannels, ['FOX', 'TBS']);
+  assert.match(formatDailyScheduleGame(game), /National TV: FOX, TBS/);
+  assert.match(formatGameMrkdwn(game), /National TV: FOX, TBS/);
 });
